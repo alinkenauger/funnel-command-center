@@ -111,47 +111,40 @@ export async function extractFileContent(file: DriveFile): Promise<FileContent> 
   try {
     // ── Google Docs ───────────────────────────────────────────────
     if (mimeType === GOOGLE_DRIVE_MIME.DOC) {
-      const params = new URLSearchParams({ format: "txt" });
-      if (API_KEY) params.set("key", API_KEY);
+      if (!API_KEY) return { type: "skipped", reason: "API key not configured" };
+      const params = new URLSearchParams({ mimeType: "text/plain", key: API_KEY });
       const res = await fetch(
-        `https://docs.google.com/document/d/${id}/export?${params}`,
+        `https://www.googleapis.com/drive/v3/files/${id}/export?${params}`,
         { headers: { "User-Agent": "Mozilla/5.0" } }
       );
       if (!res.ok) return { type: "skipped", reason: `Export failed: ${res.status}` };
       const text = await res.text();
-      if (text.trimStart().startsWith("<"))
-        return { type: "skipped", reason: "Not publicly accessible" };
       return { type: "text", content: `[Google Doc: ${name}]\n\n${text.slice(0, 20000)}` };
     }
 
     // ── Google Sheets ─────────────────────────────────────────────
     if (mimeType === GOOGLE_DRIVE_MIME.SHEET) {
-      const params = new URLSearchParams({ format: "csv" });
-      if (API_KEY) params.set("key", API_KEY);
+      if (!API_KEY) return { type: "skipped", reason: "API key not configured" };
+      const params = new URLSearchParams({ mimeType: "text/csv", key: API_KEY });
       const res = await fetch(
-        `https://docs.google.com/spreadsheets/d/${id}/export?${params}`,
+        `https://www.googleapis.com/drive/v3/files/${id}/export?${params}`,
         { headers: { "User-Agent": "Mozilla/5.0" } }
       );
       if (!res.ok) return { type: "skipped", reason: `Export failed: ${res.status}` };
       const text = await res.text();
-      if (text.trimStart().startsWith("<"))
-        return { type: "skipped", reason: "Not publicly accessible" };
       return { type: "text", content: `[Google Sheet: ${name}]\n\n${text.slice(0, 20000)}` };
     }
 
     // ── Google Slides ─────────────────────────────────────────────
     if (mimeType === GOOGLE_DRIVE_MIME.SLIDE) {
-      const params = new URLSearchParams({});
-      if (API_KEY) params.set("key", API_KEY);
-      const qs = params.toString() ? `?${params}` : "";
+      if (!API_KEY) return { type: "skipped", reason: "API key not configured" };
+      const params = new URLSearchParams({ mimeType: "text/plain", key: API_KEY });
       const res = await fetch(
-        `https://docs.google.com/presentation/d/${id}/export/txt${qs}`,
+        `https://www.googleapis.com/drive/v3/files/${id}/export?${params}`,
         { headers: { "User-Agent": "Mozilla/5.0" } }
       );
       if (!res.ok) return { type: "skipped", reason: `Export failed: ${res.status}` };
       const text = await res.text();
-      if (text.trimStart().startsWith("<"))
-        return { type: "skipped", reason: "Not publicly accessible" };
       return { type: "text", content: `[Google Slides: ${name}]\n\n${text.slice(0, 20000)}` };
     }
 
@@ -195,6 +188,49 @@ export async function extractFileContent(file: DriveFile): Promise<FileContent> 
         return { type: "skipped", reason: "Not accessible via API key" };
       const text = await res.text();
       return { type: "text", content: `[${name}]\n\n${text.slice(0, 20000)}` };
+    }
+
+    // ── Uploaded Office files (.docx, .xlsx, .pptx) ───────────────
+    // Google Drive can export uploaded Office files as Google Workspace
+    // formats, then we export those as text/csv.
+    const OFFICE_MIME_TO_EXPORT: Record<string, { exportMime: string; label: string }> = {
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+        exportMime: "text/plain",
+        label: "Word Doc",
+      },
+      "application/msword": { exportMime: "text/plain", label: "Word Doc" },
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+        exportMime: "text/csv",
+        label: "Excel Sheet",
+      },
+      "application/vnd.ms-excel": { exportMime: "text/csv", label: "Excel Sheet" },
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation": {
+        exportMime: "text/plain",
+        label: "PowerPoint",
+      },
+      "application/vnd.ms-powerpoint": { exportMime: "text/plain", label: "PowerPoint" },
+    };
+
+    const officeInfo = OFFICE_MIME_TO_EXPORT[mimeType];
+    if (officeInfo) {
+      if (!API_KEY) return { type: "skipped", reason: "API key not configured" };
+      // Drive can export uploaded Office files via the same export endpoint
+      const params = new URLSearchParams({ mimeType: officeInfo.exportMime, key: API_KEY });
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${id}/export?${params}`,
+        { headers: { "User-Agent": "Mozilla/5.0" } }
+      );
+      if (!res.ok) {
+        // Some uploaded files can't be exported — fall back to binary download
+        const dlRes = await downloadViaApi(id, API_KEY);
+        if (!dlRes.ok) return { type: "skipped", reason: `Export + download both failed: ${dlRes.status}` };
+        const ct = dlRes.headers.get("content-type") ?? "";
+        if (ct.includes("text/html")) return { type: "skipped", reason: "Not accessible via API key" };
+        const text = await dlRes.text();
+        return { type: "text", content: `[${officeInfo.label}: ${name}]\n\n${text.slice(0, 20000)}` };
+      }
+      const text = await res.text();
+      return { type: "text", content: `[${officeInfo.label}: ${name}]\n\n${text.slice(0, 20000)}` };
     }
 
     return { type: "skipped", reason: `Unsupported type: ${mimeType}` };
