@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // Vercel: allow up to 300s for Claude synthesis
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
@@ -111,12 +112,9 @@ export async function POST(request: NextRequest) {
       messages: [
         {
           role: "user",
-          content: [
-            platformSection
-              ? `${platformSection}\n\n---\n\n`
-              : "",
+              content:
+            (platformSection ? `${platformSection}\n\n---\n\n` : "") +
             `Here are the per-file findings from analyzing the business's Google Drive folder (${allFindings.length} files with relevant content):\n\n${findingsSummary}\n\nSynthesize these into the complete funnel analysis JSON object.`,
-          ].join(""),
         },
       ],
     });
