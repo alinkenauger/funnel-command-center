@@ -87,11 +87,25 @@ export async function POST(request: NextRequest) {
   // Build Claude message content blocks
   const userContentBlocks: ContentBlock[] = [];
   const skippedFiles: Array<{ name: string; reason: string }> = [];
+  // Files too large to batch with others — returned so the caller can retry them solo
+  const MAX_BATCH_FILE_BYTES = 4 * 1024 * 1024; // 4 MB of extracted content
+  const oversizedFiles: DriveFile[] = [];
 
   for (const { file, content } of contentResults) {
     if (content.type === "skipped") {
       skippedFiles.push({ name: file.name, reason: content.reason });
       continue;
+    }
+
+    // If this file's content is too large to include alongside others, defer it
+    // for a solo retry pass rather than risk a timeout mid-batch.
+    if (files.length > 1) {
+      const contentSize =
+        content.type === "text" ? content.content.length : content.base64.length;
+      if (contentSize > MAX_BATCH_FILE_BYTES) {
+        oversizedFiles.push(file);
+        continue;
+      }
     }
 
     // Add a text header identifying the file
@@ -121,7 +135,7 @@ export async function POST(request: NextRequest) {
 
   // If no content was extracted, return empty findings
   if (userContentBlocks.length === 0) {
-    return NextResponse.json({ batchIndex, findings: [], skipped: skippedFiles });
+    return NextResponse.json({ batchIndex, findings: [], skipped: skippedFiles, oversized: oversizedFiles });
   }
 
   const messages: MessageParam[] = [
@@ -153,9 +167,10 @@ export async function POST(request: NextRequest) {
       batchIndex,
       findings: [],
       skipped: skippedFiles,
+      oversized: oversizedFiles,
       error: "Claude parse error — batch skipped",
     });
   }
 
-  return NextResponse.json({ batchIndex, findings, skipped: skippedFiles });
+  return NextResponse.json({ batchIndex, findings, skipped: skippedFiles, oversized: oversizedFiles });
 }

@@ -25,6 +25,7 @@ type Phase =
   | "listing"
   | "confirming"
   | "processing"
+  | "retrying"
   | "synthesizing"
   | "done"
   | "error";
@@ -35,7 +36,9 @@ interface BatchStatus {
   status: "pending" | "running" | "done" | "error";
   findingsCount: number;
   skippedCount: number;
+  deferredCount: number;
   errorMsg?: string;
+  isRetry?: boolean;
 }
 
 interface DriveIngestionProps {
@@ -82,6 +85,7 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
   const [allFindings, setAllFindings] = useState<FileFinding[]>([]);
   const [gapQuestions, setGapQuestions] = useState<GapQuestion[]>([]);
   const [totalSkipped, setTotalSkipped] = useState(0);
+  const [totalDeferred, setTotalDeferred] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
 
   // ── Step 1: List files ──────────────────────────────────────────
@@ -124,11 +128,13 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
       status: "pending",
       findingsCount: 0,
       skippedCount: 0,
+      deferredCount: 0,
     }));
     setBatches(initialBatches);
 
     const accumulated: FileFinding[] = [];
     let skipped = 0;
+    const allOversized: DriveFile[] = [];
 
     for (let i = 0; i < chunks.length; i++) {
       // Mark running
@@ -146,10 +152,12 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
 
         const batchFindings: FileFinding[] = json.findings ?? [];
         const batchSkipped: number = (json.skipped ?? []).length;
+        const batchOversized: DriveFile[] = json.oversized ?? [];
         const batchError: string | undefined = json.error;
 
         accumulated.push(...batchFindings);
         skipped += batchSkipped;
+        allOversized.push(...batchOversized);
 
         setBatches((prev) =>
           prev.map((b) =>
@@ -159,6 +167,7 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
                   status: batchError ? "error" : "done",
                   findingsCount: batchFindings.length,
                   skippedCount: batchSkipped,
+                  deferredCount: batchOversized.length,
                   errorMsg: batchError,
                 }
               : b
@@ -170,6 +179,66 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
           prev.map((b) => (b.index === i ? { ...b, status: "error", errorMsg: msg } : b))
         );
         // Continue with remaining batches
+      }
+    }
+
+    // ── Retry oversized files one-by-one ────────────────────────
+    if (allOversized.length > 0) {
+      setPhase("retrying");
+      setTotalDeferred(allOversized.length);
+
+      const retryBatchOffset = chunks.length;
+      const retryInitial: BatchStatus[] = allOversized.map((file, ri) => ({
+        index: retryBatchOffset + ri,
+        label: `↩ Retry: ${file.name}`,
+        status: "pending",
+        findingsCount: 0,
+        skippedCount: 0,
+        deferredCount: 0,
+        isRetry: true,
+      }));
+      setBatches((prev) => [...prev, ...retryInitial]);
+
+      for (let ri = 0; ri < allOversized.length; ri++) {
+        const batchIdx = retryBatchOffset + ri;
+        setBatches((prev) =>
+          prev.map((b) => (b.index === batchIdx ? { ...b, status: "running" } : b))
+        );
+
+        try {
+          const res = await fetch("/api/ingest/batch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ files: [allOversized[ri]], batchIndex: batchIdx }),
+          });
+          const json = await res.json();
+
+          const batchFindings: FileFinding[] = json.findings ?? [];
+          const batchSkipped: number = (json.skipped ?? []).length;
+          const batchError: string | undefined = json.error;
+
+          accumulated.push(...batchFindings);
+          skipped += batchSkipped;
+
+          setBatches((prev) =>
+            prev.map((b) =>
+              b.index === batchIdx
+                ? {
+                    ...b,
+                    status: batchError ? "error" : "done",
+                    findingsCount: batchFindings.length,
+                    skippedCount: batchSkipped,
+                    errorMsg: batchError,
+                  }
+                : b
+            )
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Request failed";
+          setBatches((prev) =>
+            prev.map((b) => (b.index === batchIdx ? { ...b, status: "error", errorMsg: msg } : b))
+          );
+        }
       }
     }
 
@@ -319,12 +388,14 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
             </div>
           )}
 
-          {/* ── PROCESSING: Batch progress ───────────────────────── */}
-          {(phase === "processing" || phase === "synthesizing") && (
+          {/* ── PROCESSING / RETRYING: Batch progress ────────────── */}
+          {(phase === "processing" || phase === "retrying" || phase === "synthesizing") && (
             <div className="space-y-4">
               <p className="text-sm text-zinc-400">
                 {phase === "synthesizing"
                   ? "Synthesizing all findings into funnel report…"
+                  : phase === "retrying"
+                  ? `Retrying ${totalDeferred} large file${totalDeferred !== 1 ? "s" : ""} individually…`
                   : `Processing batches — ${batches.filter((b) => b.status === "done").length} of ${batches.length} complete`}
               </p>
 
@@ -332,14 +403,18 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
                 {batches.map((batch) => (
                   <div
                     key={batch.index}
-                    className="flex items-center gap-3 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5"
+                    className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border ${
+                      batch.isRetry
+                        ? "bg-amber-950/20 border-amber-800/40"
+                        : "bg-zinc-950 border-zinc-800"
+                    }`}
                   >
                     <div className="shrink-0">
                       {batch.status === "done" && (
-                        <CheckCircle className="w-4 h-4 text-emerald-400" />
+                        <CheckCircle className={`w-4 h-4 ${batch.isRetry ? "text-amber-400" : "text-emerald-400"}`} />
                       )}
                       {batch.status === "running" && (
-                        <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
+                        <Loader2 className={`w-4 h-4 animate-spin ${batch.isRetry ? "text-amber-400" : "text-indigo-400"}`} />
                       )}
                       {batch.status === "pending" && (
                         <div className="w-4 h-4 rounded-full border border-zinc-700" />
@@ -348,11 +423,14 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
                         <AlertCircle className="w-4 h-4 text-red-400" />
                       )}
                     </div>
-                    <span className="text-xs text-zinc-400 flex-1">{batch.label}</span>
+                    <span className={`text-xs flex-1 ${batch.isRetry ? "text-amber-300/80" : "text-zinc-400"}`}>
+                      {batch.label}
+                    </span>
                     {batch.status === "done" && (
                       <span className="text-xs text-zinc-500">
                         {batch.findingsCount} findings
                         {batch.skippedCount > 0 && `, ${batch.skippedCount} skipped`}
+                        {batch.deferredCount > 0 && `, ${batch.deferredCount} deferred`}
                       </span>
                     )}
                     {batch.status === "error" && batch.errorMsg && (
@@ -374,9 +452,10 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
               </div>
 
               {/* Totals bar */}
-              {batches.some((b) => b.status === "done") && phase === "processing" && (
+              {batches.some((b) => b.status === "done") && (phase === "processing" || phase === "retrying") && (
                 <div className="text-xs text-zinc-500 text-center">
                   {allFindings.length} findings extracted · {totalSkipped} files skipped
+                  {totalDeferred > 0 && ` · ${totalDeferred} large files retrying solo`}
                 </div>
               )}
             </div>
