@@ -96,8 +96,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "allFindings and folderId are required" }, { status: 400 });
   }
 
-  // Build compact summary of all findings for the synthesis prompt
-  const findingsSummary = JSON.stringify(allFindings, null, 0);
+  // Build compact summary of all findings for the synthesis prompt.
+  // Cap at ~120 KB to avoid hitting context limits and keep latency reasonable.
+  const MAX_FINDINGS_CHARS = 120_000;
+  let findingsSummary = JSON.stringify(allFindings, null, 0);
+  if (findingsSummary.length > MAX_FINDINGS_CHARS) {
+    // Trim the least-informative tail entries until we're under the cap
+    const trimmed = [...allFindings];
+    while (JSON.stringify(trimmed, null, 0).length > MAX_FINDINGS_CHARS && trimmed.length > 1) {
+      trimmed.pop();
+    }
+    findingsSummary = JSON.stringify(trimmed, null, 0);
+  }
 
   // Load cached platform metrics and inject them if available
   const platformMetrics = await readJsonBlob<StoredPlatformMetrics>("data/platform-metrics.json");
@@ -106,7 +116,7 @@ export async function POST(request: NextRequest) {
   let funnelData: FunnelData;
   try {
     const message = await client.messages.create({
-      model: "claude-opus-4-5",
+      model: "claude-sonnet-4-6",
       max_tokens: 8192,
       system: SYNTHESIS_SYSTEM_PROMPT,
       messages: [
