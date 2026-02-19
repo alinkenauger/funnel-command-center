@@ -23,10 +23,12 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Minus,
+  Plug,
 } from "lucide-react";
 import type { FunnelData, StageData } from "@/lib/types";
 import type { McKinseyReportData } from "@/lib/types";
 import FunnelFlow from "@/components/FunnelFlow";
+import PlatformConnector from "@/components/PlatformConnector";
 
 // ─── STAGE CONFIGURATION ─────────────────────────────────────────────────────
 
@@ -69,7 +71,7 @@ const STAGE_CONFIG = [
 ];
 
 type StageKey = (typeof STAGE_CONFIG)[number]["key"];
-type NavView = "overview" | "flow" | "stages" | "gaps" | "strategy";
+type NavView = "overview" | "flow" | "stages" | "gaps" | "strategy" | "integrations";
 
 // ─── GRADE UTILITIES ──────────────────────────────────────────────────────────
 
@@ -745,6 +747,7 @@ interface FunnelDashboardProps {
   onRefresh?: () => void;
   onUploadClick?: () => void;
   onDriveImportClick?: () => void;
+  onPlatformClick?: () => void;
   onReportClick?: () => void;
   onLogout?: () => void;
   report?: McKinseyReportData | null;
@@ -759,6 +762,7 @@ export default function FunnelDashboard({
   onRefresh,
   onUploadClick,
   onDriveImportClick,
+  onPlatformClick: _onPlatformClick, // eslint-disable-line @typescript-eslint/no-unused-vars
   onReportClick,
   onLogout,
   readinessScore = 0,
@@ -775,6 +779,7 @@ export default function FunnelDashboard({
     { id: "stages", label: "Stages", Icon: Layers },
     { id: "gaps", label: "Gaps", Icon: AlertCircle },
     { id: "strategy", label: "Strategy", Icon: Target },
+    { id: "integrations", label: "Integrations", Icon: Plug },
   ];
 
   const reportUnlocked = readinessScore >= 70;
@@ -791,6 +796,8 @@ export default function FunnelDashboard({
         return <GapsTab data={data} />;
       case "strategy":
         return <StrategyTab data={data} />;
+      case "integrations":
+        return <PlatformConnector />;
       default:
         return null;
     }

@@ -5,6 +5,8 @@ import type { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { readJsonBlob, writeJsonBlob } from "@/lib/blob-storage";
 import type { DriveFile, FileFinding, FunnelData, DriveConfig, GapQuestion, DriveSource } from "@/lib/types";
+import { buildPlatformMetricsSummary } from "@/lib/platform-connectors";
+import type { StoredPlatformMetrics } from "@/lib/platform-connectors/types";
 
 const client = new Anthropic();
 
@@ -96,6 +98,10 @@ export async function POST(request: NextRequest) {
   // Build compact summary of all findings for the synthesis prompt
   const findingsSummary = JSON.stringify(allFindings, null, 0);
 
+  // Load cached platform metrics and inject them if available
+  const platformMetrics = await readJsonBlob<StoredPlatformMetrics>("data/platform-metrics.json");
+  const platformSection = platformMetrics ? buildPlatformMetricsSummary(platformMetrics) : "";
+
   let funnelData: FunnelData;
   try {
     const message = await client.messages.create({
@@ -105,7 +111,12 @@ export async function POST(request: NextRequest) {
       messages: [
         {
           role: "user",
-          content: `Here are the per-file findings from analyzing the business's Google Drive folder (${allFindings.length} files with relevant content):\n\n${findingsSummary}\n\nSynthesize these into the complete funnel analysis JSON object.`,
+          content: [
+            platformSection
+              ? `${platformSection}\n\n---\n\n`
+              : "",
+            `Here are the per-file findings from analyzing the business's Google Drive folder (${allFindings.length} files with relevant content):\n\n${findingsSummary}\n\nSynthesize these into the complete funnel analysis JSON object.`,
+          ].join(""),
         },
       ],
     });
