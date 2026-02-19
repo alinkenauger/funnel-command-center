@@ -33,17 +33,45 @@ export interface StoredPlatformCredentials {
 
 // ── Normalized Metrics Returned by Each Connector ────────────────────────────
 
+export interface MailchimpCampaignSummary {
+  id: string;
+  subject: string;
+  send_time: string;
+  open_rate: number;   // 0–1
+  click_rate: number;  // 0–1
+  ctor: number;        // click-to-open rate 0–1
+  revenue: number;     // email-attributed revenue (USD), 0 if not tracked
+  unique_opens: number;
+  unique_clicks: number;
+}
+
+export interface MailchimpAutomationSummary {
+  id: string;
+  title: string;
+  status: string;
+  open_rate: number;  // 0–1
+  click_rate: number; // 0–1
+}
+
 export interface MailchimpMetrics {
   platform: "mailchimp";
   fetched_at: string;
   list_name: string;
   list_id: string;
   list_size: number;
-  open_rate: number;        // 0–1
-  click_rate: number;       // 0–1
-  unsubscribe_rate: number; // 0–1
-  bounce_rate_hard: number; // 0–1
+  open_rate: number;           // avg across last 30d campaigns, 0–1
+  click_rate: number;          // 0–1
+  click_to_open_rate: number;  // CTOR = clicks / opens, 0–1
+  unsubscribe_rate: number;    // 0–1
+  bounce_rate_hard: number;    // 0–1
   campaign_count_30d: number;
+  email_revenue_30d: number;   // USD, 0 if ecommerce not connected
+  new_subscribers_30d: number;
+  lost_subscribers_30d: number;
+  list_growth_rate: number;    // net % growth (new - lost) / list_size
+  automation_count: number;    // active automations
+  automations: MailchimpAutomationSummary[];
+  top_campaigns: MailchimpCampaignSummary[]; // outlier campaigns sorted by open_rate desc
 }
 
 export interface BigCommerceMetrics {

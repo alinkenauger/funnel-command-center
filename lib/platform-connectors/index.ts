@@ -76,7 +76,9 @@ export function buildPlatformStatuses(
   const mailchimpPreview = (m: MailchimpMetrics) => ({
     "List size": fmt(m.list_size, "k"),
     "Open rate": fmt(m.open_rate, "pct"),
-    "Click rate": fmt(m.click_rate, "pct"),
+    "CTOR": fmt(m.click_to_open_rate, "pct"),
+    "Growth (30d)": `+${m.new_subscribers_30d} / -${m.lost_subscribers_30d}`,
+    "Automations": String(m.automation_count),
   });
 
   const bcPreview = (m: BigCommerceMetrics) => ({
@@ -132,11 +134,38 @@ export function buildPlatformMetricsSummary(metrics: StoredPlatformMetrics): str
       `- List: "${m.list_name}" — ${m.list_size.toLocaleString()} subscribers`,
       `- Average open rate (last 30d campaigns): ${(m.open_rate * 100).toFixed(1)}%`,
       `- Average click rate: ${(m.click_rate * 100).toFixed(1)}%`,
+      `- Click-to-open rate (CTOR): ${(m.click_to_open_rate * 100).toFixed(1)}%`,
       `- Unsubscribe rate: ${(m.unsubscribe_rate * 100).toFixed(2)}%`,
       `- Hard bounce rate: ${(m.bounce_rate_hard * 100).toFixed(2)}%`,
       `- Campaigns sent in last 30 days: ${m.campaign_count_30d}`,
-      ``
+      `- Email-attributed revenue (last 30d): $${m.email_revenue_30d.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      `- New subscribers (last month): ${m.new_subscribers_30d.toLocaleString()} | Lost: ${m.lost_subscribers_30d.toLocaleString()} | Net growth rate: ${(m.list_growth_rate * 100).toFixed(2)}%`,
+      `- Active automations/flows: ${m.automation_count}`,
     );
+
+    if (m.automations.length > 0) {
+      lines.push(`- Automation details:`);
+      for (const a of m.automations) {
+        lines.push(
+          `  - "${a.title}" — open ${(a.open_rate * 100).toFixed(1)}%, click ${(a.click_rate * 100).toFixed(1)}%`
+        );
+      }
+    }
+
+    if (m.top_campaigns.length > 0) {
+      lines.push(
+        `- Top-performing campaigns (≥20% above avg open rate, sorted by open rate):`
+      );
+      for (const c of m.top_campaigns) {
+        const sentDate = c.send_time ? new Date(c.send_time).toLocaleDateString() : "?";
+        const revNote = c.revenue > 0 ? ` | revenue $${c.revenue.toLocaleString()}` : "";
+        lines.push(
+          `  - "${c.subject}" (${sentDate}) — open ${(c.open_rate * 100).toFixed(1)}%, CTOR ${(c.ctor * 100).toFixed(1)}%${revNote}`
+        );
+      }
+    }
+
+    lines.push(``);
   }
 
   if (metrics.bigcommerce) {
