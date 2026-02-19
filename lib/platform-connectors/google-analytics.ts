@@ -153,7 +153,7 @@ export async function fetchGoogleAnalyticsMetrics(
       )}`
     );
   }
-  const summaryData = await summaryRes.json();
+  const summaryData = await summaryRes.json().catch(() => ({}));
   const sRow: GA4ReportRow = summaryData.rows?.[0] ?? {};
   const sessions = parseInt(rowMetric(sRow, 0), 10);
   const bounceRate = parseFloat(rowMetric(sRow, 1)) / 100;
@@ -163,7 +163,7 @@ export async function fetchGoogleAnalyticsMetrics(
   const pageViews = parseInt(rowMetric(sRow, 5), 10);
 
   // ── Parse channels ────────────────────────────────────────────────────────
-  const channelData = channelRes.ok ? await channelRes.json() : { rows: [] };
+  const channelData = channelRes.ok ? await channelRes.json().catch(() => ({ rows: [] })) : { rows: [] };
   const channels: Array<{ channel: string; sessions: number }> = (
     channelData.rows ?? []
   ).map((r: GA4ReportRow) => ({
@@ -173,7 +173,7 @@ export async function fetchGoogleAnalyticsMetrics(
   const topChannel = channels[0]?.channel ?? "Unknown";
 
   // ── Parse device breakdown ────────────────────────────────────────────────
-  const deviceData = deviceRes.ok ? await deviceRes.json() : { rows: [] };
+  const deviceData = deviceRes.ok ? await deviceRes.json().catch(() => ({ rows: [] })) : { rows: [] };
   const deviceBreakdown: Array<{ device: string; sessions: number }> = (
     deviceData.rows ?? []
   ).map((r: GA4ReportRow) => ({
@@ -182,7 +182,7 @@ export async function fetchGoogleAnalyticsMetrics(
   }));
 
   // ── Parse top landing pages ───────────────────────────────────────────────
-  const landingData = landingRes.ok ? await landingRes.json() : { rows: [] };
+  const landingData = landingRes.ok ? await landingRes.json().catch(() => ({ rows: [] })) : { rows: [] };
   const topLandingPages: Array<{ page: string; sessions: number; bounce_rate: number }> = (
     landingData.rows ?? []
   ).map((r: GA4ReportRow) => ({

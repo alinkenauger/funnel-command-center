@@ -78,7 +78,7 @@ export async function fetchMailchimpMetrics(
 
   // ── Step 3: Parse list stats ─────────────────────────────────────────────────
   if (!listRes.ok) throw new Error(`Mailchimp list fetch error: ${listRes.status}`);
-  const listData = await listRes.json();
+  const listData = await listRes.json().catch(() => ({}));
   if (!listName) listName = listData.name ?? listId;
   const stats = listData.stats ?? {};
 
