@@ -8,7 +8,7 @@ export async function readJsonBlob<T>(path: string): Promise<T | null> {
   if (!match) return null;
   const res = await fetch(match.url, { cache: "no-store" });
   if (!res.ok) return null;
-  return res.json() as Promise<T>;
+  return res.json().catch(() => null) as Promise<T | null>;
 }
 
 export async function writeJsonBlob(path: string, data: unknown): Promise<void> {
