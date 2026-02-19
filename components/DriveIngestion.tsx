@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import type { DriveFile, FileFinding, GapQuestion } from "@/lib/types";
 
-const BATCH_SIZE = 8;
+const BATCH_SIZE = 4;
 
 type Phase =
   | "idle"
@@ -35,6 +35,7 @@ interface BatchStatus {
   status: "pending" | "running" | "done" | "error";
   findingsCount: number;
   skippedCount: number;
+  errorMsg?: string;
 }
 
 interface DriveIngestionProps {
@@ -145,6 +146,7 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
 
         const batchFindings: FileFinding[] = json.findings ?? [];
         const batchSkipped: number = (json.skipped ?? []).length;
+        const batchError: string | undefined = json.error;
 
         accumulated.push(...batchFindings);
         skipped += batchSkipped;
@@ -152,13 +154,20 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
         setBatches((prev) =>
           prev.map((b) =>
             b.index === i
-              ? { ...b, status: "done", findingsCount: batchFindings.length, skippedCount: batchSkipped }
+              ? {
+                  ...b,
+                  status: batchError ? "error" : "done",
+                  findingsCount: batchFindings.length,
+                  skippedCount: batchSkipped,
+                  errorMsg: batchError,
+                }
               : b
           )
         );
-      } catch {
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Request failed";
         setBatches((prev) =>
-          prev.map((b) => (b.index === i ? { ...b, status: "error" } : b))
+          prev.map((b) => (b.index === i ? { ...b, status: "error", errorMsg: msg } : b))
         );
         // Continue with remaining batches
       }
@@ -344,6 +353,11 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
                       <span className="text-xs text-zinc-500">
                         {batch.findingsCount} findings
                         {batch.skippedCount > 0 && `, ${batch.skippedCount} skipped`}
+                      </span>
+                    )}
+                    {batch.status === "error" && batch.errorMsg && (
+                      <span className="text-xs text-red-400 truncate max-w-[180px]" title={batch.errorMsg}>
+                        {batch.errorMsg}
                       </span>
                     )}
                   </div>

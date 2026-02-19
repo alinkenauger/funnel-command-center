@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // Vercel: allow up to 300s for file downloads + Claude response
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
