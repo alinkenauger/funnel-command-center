@@ -92,14 +92,29 @@ export type FileContent =
   | { type: "pdf"; base64: string }
   | { type: "skipped"; reason: string };
 
+// Downloads a binary file via the Drive API v3 alt=media endpoint.
+// Using the API key here (same key that lists files) bypasses the
+// html-gate that the legacy uc?export=download URL returns for
+// files that aren't 100% public.
+async function downloadViaApi(id: string, apiKey: string): Promise<Response> {
+  const params = new URLSearchParams({ alt: "media", key: apiKey });
+  return fetch(
+    `https://www.googleapis.com/drive/v3/files/${id}?${params}`,
+    { headers: { "User-Agent": "Mozilla/5.0" } }
+  );
+}
+
 export async function extractFileContent(file: DriveFile): Promise<FileContent> {
   const { id, mimeType, name } = file;
+  const API_KEY = process.env.GOOGLE_DRIVE_API_KEY;
 
   try {
     // ── Google Docs ───────────────────────────────────────────────
     if (mimeType === GOOGLE_DRIVE_MIME.DOC) {
+      const params = new URLSearchParams({ format: "txt" });
+      if (API_KEY) params.set("key", API_KEY);
       const res = await fetch(
-        `https://docs.google.com/document/d/${id}/export?format=txt`,
+        `https://docs.google.com/document/d/${id}/export?${params}`,
         { headers: { "User-Agent": "Mozilla/5.0" } }
       );
       if (!res.ok) return { type: "skipped", reason: `Export failed: ${res.status}` };
@@ -111,8 +126,10 @@ export async function extractFileContent(file: DriveFile): Promise<FileContent> 
 
     // ── Google Sheets ─────────────────────────────────────────────
     if (mimeType === GOOGLE_DRIVE_MIME.SHEET) {
+      const params = new URLSearchParams({ format: "csv" });
+      if (API_KEY) params.set("key", API_KEY);
       const res = await fetch(
-        `https://docs.google.com/spreadsheets/d/${id}/export?format=csv`,
+        `https://docs.google.com/spreadsheets/d/${id}/export?${params}`,
         { headers: { "User-Agent": "Mozilla/5.0" } }
       );
       if (!res.ok) return { type: "skipped", reason: `Export failed: ${res.status}` };
@@ -124,8 +141,11 @@ export async function extractFileContent(file: DriveFile): Promise<FileContent> 
 
     // ── Google Slides ─────────────────────────────────────────────
     if (mimeType === GOOGLE_DRIVE_MIME.SLIDE) {
+      const params = new URLSearchParams({});
+      if (API_KEY) params.set("key", API_KEY);
+      const qs = params.toString() ? `?${params}` : "";
       const res = await fetch(
-        `https://docs.google.com/presentation/d/${id}/export/txt`,
+        `https://docs.google.com/presentation/d/${id}/export/txt${qs}`,
         { headers: { "User-Agent": "Mozilla/5.0" } }
       );
       if (!res.ok) return { type: "skipped", reason: `Export failed: ${res.status}` };
@@ -137,10 +157,8 @@ export async function extractFileContent(file: DriveFile): Promise<FileContent> 
 
     // ── PDFs ──────────────────────────────────────────────────────
     if (mimeType === "application/pdf") {
-      const res = await fetch(
-        `https://drive.google.com/uc?export=download&id=${id}`,
-        { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "follow" }
-      );
+      if (!API_KEY) return { type: "skipped", reason: "API key not configured" };
+      const res = await downloadViaApi(id, API_KEY);
       if (!res.ok) return { type: "skipped", reason: `Download failed: ${res.status}` };
       const ct = res.headers.get("content-type") ?? "";
       if (ct.includes("text/html"))
@@ -154,14 +172,12 @@ export async function extractFileContent(file: DriveFile): Promise<FileContent> 
 
     // ── Images ────────────────────────────────────────────────────
     if (SUPPORTED_IMAGE_TYPES.includes(mimeType)) {
-      const res = await fetch(
-        `https://drive.google.com/uc?export=download&id=${id}`,
-        { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "follow" }
-      );
+      if (!API_KEY) return { type: "skipped", reason: "API key not configured" };
+      const res = await downloadViaApi(id, API_KEY);
       if (!res.ok) return { type: "skipped", reason: `Download failed: ${res.status}` };
       const ct = res.headers.get("content-type") ?? "";
       if (ct.includes("text/html"))
-        return { type: "skipped", reason: "Not publicly accessible" };
+        return { type: "skipped", reason: "Not accessible via API key" };
       const buffer = await res.arrayBuffer();
       if (buffer.byteLength > 5 * 1024 * 1024)
         return { type: "skipped", reason: "Image too large (>5 MB)" };
@@ -171,14 +187,13 @@ export async function extractFileContent(file: DriveFile): Promise<FileContent> 
 
     // ── Plain text / CSV ──────────────────────────────────────────
     if (mimeType === "text/plain" || mimeType === "text/csv") {
-      const res = await fetch(
-        `https://drive.google.com/uc?export=download&id=${id}`,
-        { headers: { "User-Agent": "Mozilla/5.0" } }
-      );
+      if (!API_KEY) return { type: "skipped", reason: "API key not configured" };
+      const res = await downloadViaApi(id, API_KEY);
       if (!res.ok) return { type: "skipped", reason: `Download failed: ${res.status}` };
+      const ct = res.headers.get("content-type") ?? "";
+      if (ct.includes("text/html"))
+        return { type: "skipped", reason: "Not accessible via API key" };
       const text = await res.text();
-      if (text.trimStart().startsWith("<"))
-        return { type: "skipped", reason: "Not publicly accessible" };
       return { type: "text", content: `[${name}]\n\n${text.slice(0, 20000)}` };
     }
 

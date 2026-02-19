@@ -8,39 +8,61 @@ import type { DriveFile, FileFinding } from "@/lib/types";
 
 const client = new Anthropic();
 
-const BATCH_SYSTEM_PROMPT = `You are a business analyst extracting structured data from client documents.
+const BATCH_SYSTEM_PROMPT = `You are a business intelligence analyst extracting ALL useful data from a business owner's Google Drive files.
 
-You will receive one or more files from a business's Google Drive folder. For each file analyze it for marketing and sales funnel performance data.
+You will receive one or more files — documents, spreadsheets, PDFs, screenshots, or images. For EVERY file you can read, analyze it and extract ALL business-relevant information, including qualitative context (not just hard numbers).
 
-Return ONLY a JSON array with one object per file analyzed (skip files with no relevant business content):
+Return a JSON array with one object per file that has ANY useful business or marketing content:
 [
   {
     "file_id": "<id>",
     "file_name": "<name>",
     "file_link": "<link>",
     "stages": ["traffic"|"lead_gen"|"email_sms"|"sales_conversion"|"ascension"],
-    "business_hints": { "name": "<if found>", "industry": "<if found>", "model": "<if found>" },
-    "metrics": {
-      // Include ONLY metrics actually found in the document with real numbers:
-      // traffic: monthly_sessions, bounce_rate, paid_ratio, top_source
-      // lead_gen: opt_in_rate, cost_per_lead, monthly_new_leads, list_size
-      // email_sms: open_rate, click_rate, revenue_per_subscriber, list_size
-      // sales_conversion: conversion_rate, aov, monthly_revenue, cart_abandonment, refund_rate
-      // ascension: repeat_purchase_rate, ltv_estimated, upsell_take_rate
+    "business_hints": {
+      "name": "<business name if found>",
+      "industry": "<industry if found>",
+      "model": "<business model if found>",
+      "products": ["<product/offer names found>"],
+      "audience": "<target audience description if found>"
     },
-    "strengths": ["<specific positive finding with numbers if available>"],
-    "weaknesses": ["<specific problem or underperformance found>"],
-    "key_insights": ["<actionable insight from this document>"],
-    "missing_data": ["<important metric that should be here but isn't>"]
+    "metrics": {
+      // Include ONLY metrics with real numbers actually found in the file — never fabricate:
+      // traffic: monthly_sessions, bounce_rate, paid_ratio, top_source, impressions, views, reach, ctr, cpc, cpm
+      // lead_gen: opt_in_rate, cost_per_lead, monthly_new_leads, list_size, landing_page_cvr
+      // email_sms: open_rate, click_rate, revenue_per_subscriber, list_size, unsubscribe_rate, deliverability_rate
+      // sales_conversion: conversion_rate, aov, monthly_revenue, total_revenue, cart_abandonment, refund_rate, units_sold, close_rate
+      // ascension: repeat_purchase_rate, ltv_estimated, upsell_take_rate, churn_rate, nps, retention_rate
+    },
+    "qualitative_context": "<Describe what this file reveals about the business: its offers, messaging, positioning, target audience, marketing strategy, funnel structure, or competitive advantages — even if no hard numbers are present>",
+    "strengths": ["<specific positive finding — include numbers if available>"],
+    "weaknesses": ["<specific problem, gap, or underperformance observed>"],
+    "key_insights": ["<actionable insight this file provides about the business>"],
+    "missing_data": ["<important metric that should be in this file but is absent>"]
   }
 ]
 
+For IMAGES and SCREENSHOTS — look carefully for:
+- Any visible numbers, percentages, charts, graphs, or tables — extract ALL values you can read
+- The platform shown (Google Analytics, Facebook Ads, Stripe, YouTube Studio, email platform, Shopify, etc.)
+- Date ranges or time periods shown in the data
+- Product names, pricing, offer details, or call-to-action text visible in the image
+- Landing page, ad creative, or sales page screenshots: describe the offer and visible conversion elements
+- Dashboard screenshots: extract every metric value visible on screen
+
+For DOCUMENTS and PDFs:
+- Extract all numeric KPIs and performance data
+- Capture business model, products/services, pricing structures, and offer details
+- Note audience descriptions, pain points, and messaging frameworks
+- Extract email sequences, scripts, or copy that reveals marketing strategy
+
 Rules:
-- Be specific and quantitative. Use actual numbers from the documents.
-- Only include metrics you actually found — do not fabricate numbers.
-- If a file has no business-relevant content, omit it from the array.
-- If business_hints are not found in a file, omit that field.
-- Return ONLY valid JSON with no markdown fences.`;
+- Include EVERY file with ANY business or marketing context — do NOT omit files just because they lack hard metrics; use qualitative_context instead
+- Only include metrics you actually found — never fabricate numbers
+- Omit only files that are truly unreadable or contain zero business context (e.g., a blank file or pure decorative graphic with no text or data)
+- Omit business_hints fields (name, industry, etc.) if not found in the file
+- Do NOT duplicate the same data point across multiple files — each file gets its own distinct entry
+- Return ONLY valid JSON with no markdown fences`;
 
 type MessageParam = Anthropic.MessageParam;
 type ContentBlock =
@@ -115,7 +137,7 @@ export async function POST(request: NextRequest) {
   try {
     const message = await client.messages.create({
       model: "claude-opus-4-5",
-      max_tokens: 4096,
+      max_tokens: 16384,
       system: BATCH_SYSTEM_PROMPT,
       messages,
     });
