@@ -31,7 +31,13 @@ export async function GET() {
 
 // POST /api/platforms — save credentials + test connection + cache metrics
 export async function POST(request: NextRequest) {
-  const body = await request.json();
+  let body: { platform?: unknown; credentials?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
   const { platform, credentials } = body as {
     platform: keyof StoredPlatformCredentials;
     credentials: StoredPlatformCredentials[keyof StoredPlatformCredentials];
@@ -76,24 +82,30 @@ export async function POST(request: NextRequest) {
     }
   } catch (err) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Connection test failed" },
+      { error: err instanceof Error ? err.message : String(err) },
       { status: 422 }
     );
   }
 
-  // Save updated credentials
-  await writeJsonBlob(CREDS_PATH, updatedCreds);
+  // Save updated credentials + metrics (outside connection try-catch so blob errors surface clearly)
+  try {
+    await writeJsonBlob(CREDS_PATH, updatedCreds);
 
-  // Merge new metrics with existing cached metrics
-  const existingMetrics =
-    (await readJsonBlob<StoredPlatformMetrics>(METRICS_PATH)) ?? {};
-  const updatedMetrics: StoredPlatformMetrics = {
-    ...existingMetrics,
-    [platform]: platformMetric,
-    last_synced_at: new Date().toISOString(),
-  };
-  await writeJsonBlob(METRICS_PATH, updatedMetrics);
+    const existingMetrics =
+      (await readJsonBlob<StoredPlatformMetrics>(METRICS_PATH)) ?? {};
+    const updatedMetrics: StoredPlatformMetrics = {
+      ...existingMetrics,
+      [platform]: platformMetric,
+      last_synced_at: new Date().toISOString(),
+    };
+    await writeJsonBlob(METRICS_PATH, updatedMetrics);
 
-  const statuses = buildPlatformStatuses(updatedCreds, updatedMetrics);
-  return NextResponse.json({ ok: true, statuses });
+    const statuses = buildPlatformStatuses(updatedCreds, updatedMetrics);
+    return NextResponse.json({ ok: true, statuses });
+  } catch (err) {
+    return NextResponse.json(
+      { error: `Storage error: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 500 }
+    );
+  }
 }
