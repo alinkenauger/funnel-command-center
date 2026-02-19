@@ -66,7 +66,8 @@ export function buildPlatformStatuses(
   creds: StoredPlatformCredentials,
   metrics: StoredPlatformMetrics
 ): AllPlatformStatuses {
-  const fmt = (n: number, type: "pct" | "usd" | "num" | "k" | "x") => {
+  const fmt = (n: number | undefined | null, type: "pct" | "usd" | "num" | "k" | "x") => {
+    if (n == null || !isFinite(n)) return "—";
     if (type === "pct") return `${(n * 100).toFixed(1)}%`;
     if (type === "usd") return n >= 1000 ? `$${(n / 1000).toFixed(0)}K` : `$${n.toFixed(0)}`;
     if (type === "x") return `${n.toFixed(2)}x`;
