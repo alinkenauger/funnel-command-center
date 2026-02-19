@@ -23,7 +23,7 @@ export async function fetchMailchimpMetrics(
 
   if (!listId) {
     const res = await fetch(
-      `${base}/lists?count=10&sort_field=member_count&sort_dir=DESC`,
+      `${base}/lists?count=100&fields=lists.id,lists.name,lists.stats.member_count`,
       { headers }
     );
     if (!res.ok) {
@@ -33,8 +33,11 @@ export async function fetchMailchimpMetrics(
       );
     }
     const data = await res.json();
-    const lists = data.lists ?? [];
+    const lists: Array<{ id: string; name: string; stats?: { member_count?: number } }> =
+      data.lists ?? [];
     if (!lists.length) throw new Error("No Mailchimp lists found in this account");
+    // Pick the list with the most members
+    lists.sort((a, b) => (b.stats?.member_count ?? 0) - (a.stats?.member_count ?? 0));
     listId = lists[0].id;
     listName = lists[0].name;
   }
