@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import FunnelDashboard from "@/components/FunnelDashboard";
 import FileUploader from "@/components/FileUploader";
 import McKinseyReport from "@/components/McKinseyReport";
+import DriveIngestion from "@/components/DriveIngestion";
 import { computeReadiness } from "@/lib/report-readiness";
 import type { FunnelData, McKinseyReportData } from "@/lib/types";
 
@@ -17,6 +18,7 @@ export default function Home() {
   const [errorMsg, setErrorMsg] = useState("");
   const [showUploader, setShowUploader] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [showDriveIngestion, setShowDriveIngestion] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
   const loadData = useCallback(async () => {
@@ -121,24 +123,42 @@ export default function Home() {
 
   // Ready — no data yet
   if (!funnelData) {
+    if (showDriveIngestion) {
+      return (
+        <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-6">
+          <DriveIngestion
+            onComplete={() => { setShowDriveIngestion(false); loadData(); }}
+            onClose={() => setShowDriveIngestion(false)}
+          />
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-6">
         <div className="w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-xl p-8 text-center">
           <p className="text-zinc-300 font-medium mb-2">No analysis data yet</p>
           <p className="text-zinc-500 text-sm mb-6">
-            No{" "}
-            <code className="text-zinc-400 bg-zinc-800 px-1 rounded">master-data.json</code>{" "}
-            found. Upload your funnel spreadsheet to get started.
+            Connect a Google Drive folder to automatically scan all your client&apos;s documents,
+            or upload a single data file manually.
           </p>
-          <button
-            onClick={() => setShowUploader(true)}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg transition-colors"
-          >
-            Upload Data File
-          </button>
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={() => setShowDriveIngestion(true)}
+              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg transition-colors font-medium"
+            >
+              Import from Google Drive Folder
+            </button>
+            <button
+              onClick={() => setShowUploader(true)}
+              className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors"
+            >
+              Upload a Single File
+            </button>
+          </div>
           <button
             onClick={handleLogout}
-            className="block mt-3 mx-auto text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+            className="block mt-4 mx-auto text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
           >
             Sign out
           </button>
@@ -157,6 +177,7 @@ export default function Home() {
         data={funnelData}
         onRefresh={loadData}
         onUploadClick={() => setShowUploader(true)}
+        onDriveImportClick={() => setShowDriveIngestion(true)}
         onReportClick={report ? () => setShowReport(true) : handleGenerateReport}
         onLogout={handleLogout}
         report={report}
@@ -166,6 +187,13 @@ export default function Home() {
 
       {showUploader && (
         <FileUploader onClose={() => { setShowUploader(false); loadData(); }} />
+      )}
+
+      {showDriveIngestion && (
+        <DriveIngestion
+          onComplete={() => { setShowDriveIngestion(false); loadData(); }}
+          onClose={() => setShowDriveIngestion(false)}
+        />
       )}
 
       {showReport && report && (

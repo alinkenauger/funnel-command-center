@@ -1,3 +1,48 @@
+// ── Drive Ingestion Types ──────────────────────────────────────
+export interface DriveFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: string;
+  modifiedTime: string;
+  webViewLink: string;
+}
+
+export interface DriveConfig {
+  folderId: string;
+  folderName?: string;
+  connectedAt: string;
+  lastSyncedAt?: string;
+  knownFileIds: string[];
+}
+
+export interface DriveSource {
+  file_id: string;
+  file_name: string;
+  file_link: string;
+  stages_referenced: string[];
+}
+
+export interface GapQuestion {
+  stage: string;
+  question: string;
+  context: string;
+}
+
+export interface FileFinding {
+  file_id: string;
+  file_name: string;
+  file_link: string;
+  stages: string[];
+  business_hints?: { name?: string; industry?: string; model?: string };
+  metrics: Record<string, string | number>;
+  strengths: string[];
+  weaknesses: string[];
+  key_insights: string[];
+  missing_data: string[];
+}
+
+// ── Core Funnel Types ──────────────────────────────────────────
 export interface StageMetrics {
   monthly_sessions?: number;
   bounce_rate?: number;
@@ -30,6 +75,7 @@ export interface StageData {
   strengths: string[];
   weaknesses: string[];
   revenue_opportunity: number;
+  sources?: string[]; // file IDs that contributed to this stage
 }
 
 export interface FunnelData {
@@ -58,6 +104,11 @@ export interface FunnelData {
     total_revenue_opportunity: number;
   };
   processing_log?: Array<{ timestamp: string; action: string }>;
+  // Drive ingestion additions
+  sources?: DriveSource[];
+  gap_questions?: GapQuestion[];
+  drive_folder_id?: string;
+  ingested_at?: string;
 }
 
 export interface McKinseyReportData {

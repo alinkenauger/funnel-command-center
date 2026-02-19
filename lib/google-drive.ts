@@ -1,0 +1,167 @@
+import type { DriveFile } from "./types";
+
+const GOOGLE_DRIVE_MIME = {
+  DOC: "application/vnd.google-apps.document",
+  SHEET: "application/vnd.google-apps.spreadsheet",
+  SLIDE: "application/vnd.google-apps.presentation",
+} as const;
+
+const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+
+export function extractFolderIdFromUrl(url: string): string | null {
+  // https://drive.google.com/drive/folders/FOLDER_ID
+  // https://drive.google.com/drive/u/0/folders/FOLDER_ID
+  const match = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
+export async function listFolderFiles(folderId: string): Promise<DriveFile[]> {
+  const API_KEY = process.env.GOOGLE_DRIVE_API_KEY;
+  if (!API_KEY) {
+    throw new Error(
+      "GOOGLE_DRIVE_API_KEY not configured. Add it to your Vercel environment variables."
+    );
+  }
+
+  const allFiles: DriveFile[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const params = new URLSearchParams({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields: "nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink)",
+      pageSize: "1000",
+      key: API_KEY,
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files?${params}`,
+      { headers: { "User-Agent": "Mozilla/5.0" } }
+    );
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const msg =
+        (errData as { error?: { message?: string } })?.error?.message ??
+        `Drive API returned HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+
+    const data = (await res.json()) as {
+      files?: DriveFile[];
+      nextPageToken?: string;
+    };
+    allFiles.push(...(data.files ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
+  return allFiles;
+}
+
+// ── Content Extraction ────────────────────────────────────────────
+
+export type FileContent =
+  | { type: "text"; content: string }
+  | { type: "image"; base64: string; mediaType: string }
+  | { type: "pdf"; base64: string }
+  | { type: "skipped"; reason: string };
+
+export async function extractFileContent(file: DriveFile): Promise<FileContent> {
+  const { id, mimeType, name } = file;
+
+  try {
+    // ── Google Docs ───────────────────────────────────────────────
+    if (mimeType === GOOGLE_DRIVE_MIME.DOC) {
+      const res = await fetch(
+        `https://docs.google.com/document/d/${id}/export?format=txt`,
+        { headers: { "User-Agent": "Mozilla/5.0" } }
+      );
+      if (!res.ok) return { type: "skipped", reason: `Export failed: ${res.status}` };
+      const text = await res.text();
+      if (text.trimStart().startsWith("<"))
+        return { type: "skipped", reason: "Not publicly accessible" };
+      return { type: "text", content: `[Google Doc: ${name}]\n\n${text.slice(0, 20000)}` };
+    }
+
+    // ── Google Sheets ─────────────────────────────────────────────
+    if (mimeType === GOOGLE_DRIVE_MIME.SHEET) {
+      const res = await fetch(
+        `https://docs.google.com/spreadsheets/d/${id}/export?format=csv`,
+        { headers: { "User-Agent": "Mozilla/5.0" } }
+      );
+      if (!res.ok) return { type: "skipped", reason: `Export failed: ${res.status}` };
+      const text = await res.text();
+      if (text.trimStart().startsWith("<"))
+        return { type: "skipped", reason: "Not publicly accessible" };
+      return { type: "text", content: `[Google Sheet: ${name}]\n\n${text.slice(0, 20000)}` };
+    }
+
+    // ── Google Slides ─────────────────────────────────────────────
+    if (mimeType === GOOGLE_DRIVE_MIME.SLIDE) {
+      const res = await fetch(
+        `https://docs.google.com/presentation/d/${id}/export/txt`,
+        { headers: { "User-Agent": "Mozilla/5.0" } }
+      );
+      if (!res.ok) return { type: "skipped", reason: `Export failed: ${res.status}` };
+      const text = await res.text();
+      if (text.trimStart().startsWith("<"))
+        return { type: "skipped", reason: "Not publicly accessible" };
+      return { type: "text", content: `[Google Slides: ${name}]\n\n${text.slice(0, 20000)}` };
+    }
+
+    // ── PDFs ──────────────────────────────────────────────────────
+    if (mimeType === "application/pdf") {
+      const res = await fetch(
+        `https://drive.google.com/uc?export=download&id=${id}`,
+        { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "follow" }
+      );
+      if (!res.ok) return { type: "skipped", reason: `Download failed: ${res.status}` };
+      const ct = res.headers.get("content-type") ?? "";
+      if (ct.includes("text/html"))
+        return { type: "skipped", reason: "Virus-scan gate — file may be too large or restricted" };
+      const buffer = await res.arrayBuffer();
+      if (buffer.byteLength > 10 * 1024 * 1024)
+        return { type: "skipped", reason: "PDF too large (>10 MB)" };
+      const base64 = Buffer.from(buffer).toString("base64");
+      return { type: "pdf", base64 };
+    }
+
+    // ── Images ────────────────────────────────────────────────────
+    if (SUPPORTED_IMAGE_TYPES.includes(mimeType)) {
+      const res = await fetch(
+        `https://drive.google.com/uc?export=download&id=${id}`,
+        { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "follow" }
+      );
+      if (!res.ok) return { type: "skipped", reason: `Download failed: ${res.status}` };
+      const ct = res.headers.get("content-type") ?? "";
+      if (ct.includes("text/html"))
+        return { type: "skipped", reason: "Not publicly accessible" };
+      const buffer = await res.arrayBuffer();
+      if (buffer.byteLength > 5 * 1024 * 1024)
+        return { type: "skipped", reason: "Image too large (>5 MB)" };
+      const base64 = Buffer.from(buffer).toString("base64");
+      return { type: "image", base64, mediaType: mimeType };
+    }
+
+    // ── Plain text / CSV ──────────────────────────────────────────
+    if (mimeType === "text/plain" || mimeType === "text/csv") {
+      const res = await fetch(
+        `https://drive.google.com/uc?export=download&id=${id}`,
+        { headers: { "User-Agent": "Mozilla/5.0" } }
+      );
+      if (!res.ok) return { type: "skipped", reason: `Download failed: ${res.status}` };
+      const text = await res.text();
+      if (text.trimStart().startsWith("<"))
+        return { type: "skipped", reason: "Not publicly accessible" };
+      return { type: "text", content: `[${name}]\n\n${text.slice(0, 20000)}` };
+    }
+
+    return { type: "skipped", reason: `Unsupported type: ${mimeType}` };
+  } catch (err) {
+    return {
+      type: "skipped",
+      reason: `Error: ${err instanceof Error ? err.message : "unknown error"}`,
+    };
+  }
+}

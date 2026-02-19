@@ -13,6 +13,7 @@ import {
   AlertCircle,
   FileText,
   Upload,
+  FolderOpen,
   ChevronRight,
   ChevronDown,
   Activity,
@@ -743,6 +744,7 @@ interface FunnelDashboardProps {
   data: FunnelData;
   onRefresh?: () => void;
   onUploadClick?: () => void;
+  onDriveImportClick?: () => void;
   onReportClick?: () => void;
   onLogout?: () => void;
   report?: McKinseyReportData | null;
@@ -756,6 +758,7 @@ export default function FunnelDashboard({
   data,
   onRefresh,
   onUploadClick,
+  onDriveImportClick,
   onReportClick,
   onLogout,
   readinessScore = 0,
@@ -839,6 +842,15 @@ export default function FunnelDashboard({
 
         {/* Sidebar actions */}
         <div className="p-2 border-t border-zinc-800 space-y-0.5">
+          {onDriveImportClick && (
+            <button
+              onClick={onDriveImportClick}
+              className="w-full flex items-center gap-3 px-2.5 py-2 rounded-md text-sm text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300 transition-colors"
+            >
+              <FolderOpen size={15} className="flex-shrink-0" />
+              {!sidebarCollapsed && <span>Import from Drive</span>}
+            </button>
+          )}
           {onUploadClick && (
             <button
               onClick={onUploadClick}
