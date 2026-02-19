@@ -17,7 +17,6 @@ import type { McKinseyReportData, IssueNode } from "@/lib/types";
 interface McKinseyReportProps {
   report: McKinseyReportData;
   businessName: string;
-  folderId: string;
   onClose: () => void;
 }
 
@@ -138,7 +137,6 @@ function SectionHeader({ label, index }: { label: string; index: number }) {
 export default function McKinseyReport({
   report,
   businessName,
-  folderId,
   onClose,
 }: McKinseyReportProps) {
   const [copied, setCopied] = useState(false);
@@ -155,9 +153,7 @@ export default function McKinseyReport({
   async function handleDownloadMd() {
     setDownloading(true);
     try {
-      const res = await fetch(
-        `/api/drive/reports?folderId=${encodeURIComponent(folderId)}&filename=mckinsey-assessment.md`
-      );
+      const res = await fetch("/api/reports?filename=mckinsey-assessment.md");
       if (!res.ok) throw new Error("Not found");
       const { content } = await res.json();
       const blob = new Blob([content], { type: "text/markdown" });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import {
   Signal,
   Target,
@@ -17,7 +17,7 @@ import {
   ChevronDown,
   Activity,
   RefreshCw,
-  ExternalLink,
+  LogOut,
   Zap,
   ArrowUpRight,
   ArrowDownRight,
@@ -741,11 +741,10 @@ function StrategyTab({ data }: { data: FunnelData }) {
 
 interface FunnelDashboardProps {
   data: FunnelData;
-  folderId?: string;
   onRefresh?: () => void;
   onUploadClick?: () => void;
   onReportClick?: () => void;
-  onFolderSetup?: () => void;
+  onLogout?: () => void;
   report?: McKinseyReportData | null;
   readinessScore?: number;
   isGeneratingReport?: boolean;
@@ -755,12 +754,10 @@ interface FunnelDashboardProps {
 
 export default function FunnelDashboard({
   data,
-  folderId,
   onRefresh,
   onUploadClick,
   onReportClick,
-  onFolderSetup,
-  report,
+  onLogout,
   readinessScore = 0,
   isGeneratingReport = false,
 }: FunnelDashboardProps) {
@@ -851,13 +848,13 @@ export default function FunnelDashboard({
               {!sidebarCollapsed && <span>Upload Files</span>}
             </button>
           )}
-          {folderId && (
+          {onLogout && (
             <button
-              onClick={onFolderSetup}
+              onClick={onLogout}
               className="w-full flex items-center gap-3 px-2.5 py-2 rounded-md text-sm text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300 transition-colors"
             >
-              <ExternalLink size={15} className="flex-shrink-0" />
-              {!sidebarCollapsed && <span>Drive Folder</span>}
+              <LogOut size={15} className="flex-shrink-0" />
+              {!sidebarCollapsed && <span>Sign out</span>}
             </button>
           )}
           {/* Toggle collapse */}

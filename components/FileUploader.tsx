@@ -8,11 +8,9 @@ interface UploadFile {
   file: File;
   status: "pending" | "uploading" | "done" | "error";
   errorMsg?: string;
-  fileId?: string;
 }
 
 interface FileUploaderProps {
-  folderId: string;
   onClose?: () => void;
 }
 
@@ -27,7 +25,7 @@ const ACCEPTED_TYPES = [
   "image/jpeg",
 ];
 
-export default function FileUploader({ folderId, onClose }: FileUploaderProps) {
+export default function FileUploader({ onClose }: FileUploaderProps) {
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -61,19 +59,19 @@ export default function FileUploader({ folderId, onClose }: FileUploaderProps) {
       const formData = new FormData();
       formData.append("file", entry.file);
 
-      const res = await fetch(`/api/drive/upload?folderId=${encodeURIComponent(folderId)}`, {
+      const res = await fetch("/api/upload", {
         method: "POST",
         body: formData,
       });
 
-      const json = await res.json();
-      if (json.success) {
+      if (res.ok) {
         setFiles((prev) =>
           prev.map((f) =>
-            f.id === entry.id ? { ...f, status: "done", fileId: json.fileId } : f
+            f.id === entry.id ? { ...f, status: "done" } : f
           )
         );
       } else {
+        const json = await res.json().catch(() => ({}));
         throw new Error(json.error ?? "Upload failed");
       }
     } catch (err) {
@@ -102,7 +100,7 @@ export default function FileUploader({ folderId, onClose }: FileUploaderProps) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
           <div>
             <h2 className="text-base font-semibold text-zinc-100">Upload Files</h2>
-            <p className="text-xs text-zinc-500 mt-0.5">Files are stored in your Drive inbox/</p>
+            <p className="text-xs text-zinc-500 mt-0.5">Files are stored in the workspace inbox</p>
           </div>
           {onClose && (
             <button

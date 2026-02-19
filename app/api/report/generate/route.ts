@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+export const dynamic = "force-dynamic";
+
+import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { auth } from "@/lib/auth";
-import { readJsonFile, writeJsonFile, writeTextFile } from "@/lib/google-drive";
+import { readJsonBlob, writeJsonBlob, writeTextBlob } from "@/lib/blob-storage";
 import type { FunnelData, McKinseyReportData } from "@/lib/types";
 
 const client = new Anthropic();
@@ -233,25 +234,13 @@ ${strategic_assessment.top_opportunities.map((o) => `- ${o}`).join("\n")}
 `;
 }
 
-export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session?.accessToken) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const folderId = request.nextUrl.searchParams.get("folderId");
-  if (!folderId) {
-    return NextResponse.json({ error: "folderId is required" }, { status: 400 });
-  }
-
+export async function POST() {
   try {
-    // Load master data
-    const data = await readJsonFile<FunnelData>(session.accessToken, folderId, "master-data.json");
+    const data = await readJsonBlob<FunnelData>("data/master-data.json");
     if (!data) {
-      return NextResponse.json({ error: "master-data.json not found in Drive folder" }, { status: 404 });
+      return NextResponse.json({ error: "master-data.json not found" }, { status: 404 });
     }
 
-    // Call Claude
     const message = await client.messages.create({
       model: "claude-opus-4-5",
       max_tokens: 4096,
@@ -262,10 +251,8 @@ export async function POST(request: NextRequest) {
     const rawText =
       message.content[0].type === "text" ? message.content[0].text : "";
 
-    // Parse JSON
     let report: McKinseyReportData;
     try {
-      // Strip any accidental markdown fences
       const cleaned = rawText.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
       report = JSON.parse(cleaned);
       report.generated_at = new Date().toISOString();
@@ -274,16 +261,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Failed to parse report JSON from Claude" }, { status: 500 });
     }
 
-    // Save to Drive
     await Promise.all([
-      writeJsonFile(session.accessToken, folderId, "mckinsey-assessment.json", report, "reports"),
-      writeTextFile(
-        session.accessToken,
-        folderId,
-        "mckinsey-assessment.md",
-        reportToMarkdown(report, data.business.name),
-        "reports"
-      ),
+      writeJsonBlob("reports/mckinsey-assessment.json", report),
+      writeTextBlob("reports/mckinsey-assessment.md", reportToMarkdown(report, data.business.name)),
     ]);
 
     return NextResponse.json({ success: true, report });

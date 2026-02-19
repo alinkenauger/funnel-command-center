@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Signal, Target, Mail, DollarSign, TrendingUp, X, ChevronRight } from "lucide-react";
+import { Signal, Target, Mail, DollarSign, TrendingUp, X } from "lucide-react";
 import type { FunnelData, StageData } from "@/lib/types";
 
 // ─── STAGE CONFIG ─────────────────────────────────────────────────────────────
@@ -61,9 +61,6 @@ function gradeBorderHex(grade: string): string {
   return "#ef4444"; // red-500
 }
 
-function gradeBarHex(grade: string): string {
-  return gradeBorderHex(grade);
-}
 
 function formatMetricValue(key: string, value: string | number | undefined): string {
   if (value === undefined || value === null) return "—";
@@ -294,7 +291,7 @@ interface SlideOverProps {
 }
 
 function SlideOver({ config, stage, onClose }: SlideOverProps) {
-  const { Icon, label, description } = config as typeof STAGE_CONFIG[number] & { description?: string };
+  const { Icon, label } = config as typeof STAGE_CONFIG[number] & { description?: string };
 
   return (
     <div className="absolute inset-y-0 right-0 w-80 bg-zinc-900 border-l border-zinc-700/50 flex flex-col shadow-2xl z-20">
