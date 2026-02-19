@@ -19,7 +19,7 @@ import type { AllPlatformStatuses } from "@/lib/platform-connectors/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PlatformKey = "mailchimp" | "bigcommerce" | "google_analytics" | "google_ads";
+type PlatformKey = "mailchimp" | "woocommerce" | "google_analytics" | "google_ads";
 
 interface PlatformMeta {
   key: PlatformKey;
@@ -61,23 +61,29 @@ const PLATFORMS: PlatformMeta[] = [
     ],
   },
   {
-    key: "bigcommerce",
-    label: "BigCommerce",
-    description: "Revenue, orders, AOV, customer counts",
+    key: "woocommerce",
+    label: "WooCommerce",
+    description: "Revenue, orders, AOV, customer counts, refunds",
     icon: <ShoppingCart className="w-5 h-5" />,
     fields: [
       {
-        key: "store_hash",
-        label: "Store Hash",
-        placeholder: "abc123  (from store-abc123.mybigcommerce.com)",
-        hint: "The short code in your store URL",
+        key: "store_url",
+        label: "Store URL",
+        placeholder: "https://yourstore.com",
+        hint: "Your WordPress site URL (must have WooCommerce REST API enabled)",
       },
       {
-        key: "access_token",
-        label: "API Access Token",
-        placeholder: "Your V2/V3 API token",
+        key: "consumer_key",
+        label: "Consumer Key",
+        placeholder: "ck_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        hint: "WooCommerce → Settings → Advanced → REST API → Add Key",
+      },
+      {
+        key: "consumer_secret",
+        label: "Consumer Secret",
+        placeholder: "cs_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         type: "password",
-        hint: "Advanced Settings → API Accounts → Create API Account",
+        hint: "Shown once when you create the REST API key — save it immediately",
       },
     ],
   },

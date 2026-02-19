@@ -10,6 +10,12 @@ export interface BigCommerceCredentials {
   access_token: string; // from BigCommerce API Account
 }
 
+export interface WooCommerceCredentials {
+  store_url: string;      // e.g. "https://yourstore.com"
+  consumer_key: string;   // ck_... from WooCommerce → Settings → Advanced → REST API
+  consumer_secret: string; // cs_...
+}
+
 export interface GoogleAnalyticsCredentials {
   property_id: string;          // e.g. "123456789" (numeric GA4 property ID)
   service_account_json: string; // full contents of the downloaded JSON key file
@@ -26,7 +32,8 @@ export interface GoogleAdsCredentials {
 
 export interface StoredPlatformCredentials {
   mailchimp?: MailchimpCredentials;
-  bigcommerce?: BigCommerceCredentials;
+  bigcommerce?: BigCommerceCredentials; // kept so bigcommerce.ts still compiles
+  woocommerce?: WooCommerceCredentials;
   google_analytics?: GoogleAnalyticsCredentials;
   google_ads?: GoogleAdsCredentials;
 }
@@ -87,6 +94,20 @@ export interface BigCommerceMetrics {
   product_count: number;
 }
 
+export interface WooCommerceMetrics {
+  platform: "woocommerce";
+  fetched_at: string;
+  store_url: string;
+  currency: string;
+  total_orders_30d: number;
+  total_revenue_30d: number;
+  aov_30d: number;
+  total_customers: number;
+  new_customers_30d: number;
+  product_count: number;
+  refund_count_30d: number;
+}
+
 export interface GoogleAnalyticsMetrics {
   platform: "google_analytics";
   fetched_at: string;
@@ -114,12 +135,14 @@ export interface GoogleAdsMetrics {
 export type PlatformMetrics =
   | MailchimpMetrics
   | BigCommerceMetrics
+  | WooCommerceMetrics
   | GoogleAnalyticsMetrics
   | GoogleAdsMetrics;
 
 export interface StoredPlatformMetrics {
   mailchimp?: MailchimpMetrics;
-  bigcommerce?: BigCommerceMetrics;
+  bigcommerce?: BigCommerceMetrics; // kept for backward compat with cached data
+  woocommerce?: WooCommerceMetrics;
   google_analytics?: GoogleAnalyticsMetrics;
   google_ads?: GoogleAdsMetrics;
   last_synced_at?: string;
@@ -136,7 +159,7 @@ export interface PlatformConnectionStatus {
 
 export interface AllPlatformStatuses {
   mailchimp: PlatformConnectionStatus;
-  bigcommerce: PlatformConnectionStatus;
+  woocommerce: PlatformConnectionStatus;
   google_analytics: PlatformConnectionStatus;
   google_ads: PlatformConnectionStatus;
 }

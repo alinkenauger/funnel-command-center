@@ -1,11 +1,12 @@
 export * from "./types";
 export { fetchMailchimpMetrics } from "./mailchimp";
 export { fetchBigCommerceMetrics } from "./bigcommerce";
+export { fetchWooCommerceMetrics } from "./woocommerce";
 export { fetchGoogleAnalyticsMetrics } from "./google-analytics";
 export { fetchGoogleAdsMetrics } from "./google-ads";
 
 import { fetchMailchimpMetrics } from "./mailchimp";
-import { fetchBigCommerceMetrics } from "./bigcommerce";
+import { fetchWooCommerceMetrics } from "./woocommerce";
 import { fetchGoogleAnalyticsMetrics } from "./google-analytics";
 import { fetchGoogleAdsMetrics } from "./google-ads";
 import type {
@@ -13,7 +14,7 @@ import type {
   StoredPlatformMetrics,
   AllPlatformStatuses,
   MailchimpMetrics,
-  BigCommerceMetrics,
+  WooCommerceMetrics,
   GoogleAnalyticsMetrics,
   GoogleAdsMetrics,
 } from "./types";
@@ -33,10 +34,10 @@ export async function fetchAllPlatformMetrics(
         .catch(() => {/* silently skip failed platforms */})
     );
   }
-  if (creds.bigcommerce) {
+  if (creds.woocommerce) {
     tasks.push(
-      fetchBigCommerceMetrics(creds.bigcommerce)
-        .then((m) => { results.bigcommerce = m; })
+      fetchWooCommerceMetrics(creds.woocommerce)
+        .then((m) => { results.woocommerce = m; })
         .catch(() => {})
     );
   }
@@ -81,10 +82,11 @@ export function buildPlatformStatuses(
     "Automations": String(m.automation_count),
   });
 
-  const bcPreview = (m: BigCommerceMetrics) => ({
+  const wooPreview = (m: WooCommerceMetrics) => ({
     "Revenue (30d)": fmt(m.total_revenue_30d, "usd"),
     "Orders (30d)": fmt(m.total_orders_30d, "num"),
     AOV: fmt(m.aov_30d, "usd"),
+    "Customers": fmt(m.total_customers, "k"),
   });
 
   const gaPreview = (m: GoogleAnalyticsMetrics) => ({
@@ -105,10 +107,10 @@ export function buildPlatformStatuses(
       last_synced: metrics.mailchimp?.fetched_at,
       preview: metrics.mailchimp ? mailchimpPreview(metrics.mailchimp) : undefined,
     },
-    bigcommerce: {
-      connected: !!creds.bigcommerce,
-      last_synced: metrics.bigcommerce?.fetched_at,
-      preview: metrics.bigcommerce ? bcPreview(metrics.bigcommerce) : undefined,
+    woocommerce: {
+      connected: !!creds.woocommerce,
+      last_synced: metrics.woocommerce?.fetched_at,
+      preview: metrics.woocommerce ? wooPreview(metrics.woocommerce) : undefined,
     },
     google_analytics: {
       connected: !!creds.google_analytics,
@@ -168,16 +170,17 @@ export function buildPlatformMetricsSummary(metrics: StoredPlatformMetrics): str
     lines.push(``);
   }
 
-  if (metrics.bigcommerce) {
-    const m = metrics.bigcommerce;
+  if (metrics.woocommerce) {
+    const m = metrics.woocommerce;
     lines.push(
-      `### BigCommerce (Ecommerce)`,
-      `- Revenue last 30 days: $${m.total_revenue_30d.toLocaleString()} ${m.currency}`,
+      `### WooCommerce (Ecommerce)`,
+      `- Store: ${m.store_url}`,
+      `- Revenue last 30 days: ${m.currency} ${m.total_revenue_30d.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       `- Orders last 30 days: ${m.total_orders_30d.toLocaleString()}`,
-      `- Average order value: $${m.aov_30d.toFixed(2)}`,
+      `- Average order value: ${m.currency} ${m.aov_30d.toFixed(2)}`,
       `- Total customers: ${m.total_customers.toLocaleString()}`,
       `- New customers last 30 days: ${m.new_customers_30d.toLocaleString()}`,
-      `- Repeat purchase rate: ${(m.repeat_purchase_rate * 100).toFixed(1)}%`,
+      `- Refunds last 30 days: ${m.refund_count_30d.toLocaleString()}`,
       `- Product catalog size: ${m.product_count.toLocaleString()} products`,
       ``
     );

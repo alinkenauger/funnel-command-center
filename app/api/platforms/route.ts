@@ -6,7 +6,7 @@ import { readJsonBlob, writeJsonBlob } from "@/lib/blob-storage";
 import {
   buildPlatformStatuses,
   fetchMailchimpMetrics,
-  fetchBigCommerceMetrics,
+  fetchWooCommerceMetrics,
   fetchGoogleAnalyticsMetrics,
   fetchGoogleAdsMetrics,
 } from "@/lib/platform-connectors";
@@ -59,9 +59,9 @@ export async function POST(request: NextRequest) {
       platformMetric = await fetchMailchimpMetrics(
         credentials as StoredPlatformCredentials["mailchimp"] & object
       );
-    } else if (platform === "bigcommerce") {
-      platformMetric = await fetchBigCommerceMetrics(
-        credentials as StoredPlatformCredentials["bigcommerce"] & object
+    } else if (platform === "woocommerce") {
+      platformMetric = await fetchWooCommerceMetrics(
+        credentials as StoredPlatformCredentials["woocommerce"] & object
       );
     } else if (platform === "google_analytics") {
       platformMetric = await fetchGoogleAnalyticsMetrics(
