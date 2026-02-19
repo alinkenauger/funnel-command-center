@@ -36,7 +36,7 @@ export default function Home() {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error ?? `HTTP ${res.status}`);
       }
-      const json = await res.json();
+      const json = await res.json().catch(() => ({})) as { data?: FunnelData };
       setFunnelData(json.data ?? null);
 
       // Try to load existing report
@@ -75,7 +75,7 @@ export default function Home() {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error ?? `HTTP ${res.status}`);
       }
-      const { report: newReport } = await res.json();
+      const { report: newReport } = await res.json().catch(() => ({}));
       setReport(newReport);
       setShowReport(true);
     } catch (err) {

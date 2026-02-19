@@ -37,7 +37,7 @@ export async function fetchMailchimpMetrics(
         `Mailchimp API error ${res.status}: ${(err as Record<string, string>).detail ?? res.statusText}`
       );
     }
-    const data = await res.json();
+    const data = await res.json().catch(() => ({})) as { lists?: Array<{ id: string; name: string; stats?: { member_count?: number } }> };
     const lists: Array<{ id: string; name: string; stats?: { member_count?: number } }> =
       data.lists ?? [];
     if (!lists.length) throw new Error("No Mailchimp lists found in this account");

@@ -101,7 +101,7 @@ export async function fetchWooCommerceMetrics(
 
   // ── Parse sales reports ──────────────────────────────────────────────────
   const { orders: orders30, revenue: revenue30 } = parseSalesReport(
-    await sales30Res.json()
+    await sales30Res.json().catch(() => ({}))
   );
   const aov30 = orders30 > 0 ? revenue30 / orders30 : 0;
 

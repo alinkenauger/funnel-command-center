@@ -11,7 +11,7 @@ async function refreshAccessToken(creds: GoogleAdsCredentials): Promise<string> 
       grant_type: "refresh_token",
     }),
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({})) as Record<string, string>;
   if (!res.ok) {
     throw new Error(
       `Google Ads token refresh error: ${data.error_description ?? data.error}`
@@ -75,7 +75,7 @@ export async function fetchGoogleAdsMetrics(
       `Google Ads API error ${searchRes.status}: ${JSON.stringify((err as Record<string, unknown>).error ?? err)}`
     );
   }
-  const searchData = await searchRes.json();
+  const searchData = await searchRes.json().catch(() => ({ results: [] }));
   const rows: GadsRow[] = searchData.results ?? [];
 
   let totalImpressions = 0;
