@@ -66,19 +66,25 @@ export interface MailchimpMetrics {
   list_name: string;
   list_id: string;
   list_size: number;
-  open_rate: number;           // avg across last 30d campaigns, 0–1
-  click_rate: number;          // 0–1
-  click_to_open_rate: number;  // CTOR = clicks / opens, 0–1
-  unsubscribe_rate: number;    // 0–1
-  bounce_rate_hard: number;    // 0–1
+  open_rate: number;              // avg across last 30d campaigns, 0–1
+  click_rate: number;             // 0–1
+  click_to_open_rate: number;     // CTOR = clicks / opens, 0–1
+  unsubscribe_rate: number;       // 0–1 all-time list stat
+  bounce_rate_hard: number;       // 0–1 all-time list stat
+  soft_bounce_rate: number;       // 0–1 all-time list stat
+  cleaned_count: number;          // total addresses cleaned (hard bounced/abuse)
+  total_contacts: number;         // total incl. unsubscribed
   campaign_count_30d: number;
-  email_revenue_30d: number;   // USD, 0 if ecommerce not connected
+  email_revenue_30d: number;      // USD, 0 if ecommerce not connected
   new_subscribers_30d: number;
   lost_subscribers_30d: number;
-  list_growth_rate: number;    // net % growth (new - lost) / list_size
-  automation_count: number;    // active automations
+  list_growth_rate: number;       // net % growth (new - lost) / list_size
+  avg_sub_rate_monthly: number;   // avg new subscribers added per month (all-time stat)
+  list_rating: number;            // Mailchimp quality score 1–5
+  automation_count: number;       // active automations
   automations: MailchimpAutomationSummary[];
   top_campaigns: MailchimpCampaignSummary[]; // outlier campaigns sorted by open_rate desc
+  growth_history_3m: Array<{ month: string; subscribed: number; unsubscribed: number }>;
 }
 
 export interface BigCommerceMetrics {
@@ -94,42 +100,89 @@ export interface BigCommerceMetrics {
   product_count: number;
 }
 
+export interface WooCommerceProductSummary {
+  product_id: number;
+  name: string;
+  quantity_sold: number;  // units sold (top sellers) or # customers (repeat purchase)
+  revenue: number;        // USD; 0 if unavailable from the endpoint
+}
+
 export interface WooCommerceMetrics {
   platform: "woocommerce";
   fetched_at: string;
   store_url: string;
   currency: string;
+  // 30-day window
   total_orders_30d: number;
   total_revenue_30d: number;
   aov_30d: number;
-  total_customers: number;
   new_customers_30d: number;
-  product_count: number;
   refund_count_30d: number;
+  // 12-month window
+  total_orders_12m: number;
+  total_revenue_12m: number;
+  aov_12m: number;
+  new_customers_12m: number;
+  refund_count_12m: number;
+  // All-time totals
+  total_customers: number;
+  product_count: number;
+  repeat_purchase_rate: number;       // 0–1, derived from 12m order sample
+  // Product intelligence
+  top_products_12m: WooCommerceProductSummary[];       // by units sold
+  repeat_purchase_products: WooCommerceProductSummary[]; // most common 2nd purchases
 }
 
 export interface GoogleAnalyticsMetrics {
   platform: "google_analytics";
   fetched_at: string;
   property_id: string;
+  // 30-day
   monthly_sessions: number;
-  bounce_rate: number;          // 0–1
+  bounce_rate: number;              // 0–1
+  engagement_rate: number;          // 0–1 (GA4 engaged sessions / total sessions)
+  avg_session_duration_sec: number; // average seconds per session
+  page_views_30d: number;
   new_users_30d: number;
+  // 12-month
+  sessions_12m: number;
+  new_users_12m: number;
+  // Breakdowns
   top_channel: string;
   channels: Array<{ channel: string; sessions: number }>;
+  device_breakdown: Array<{ device: string; sessions: number }>;
+  top_landing_pages: Array<{ page: string; sessions: number; bounce_rate: number }>;
+}
+
+export interface GoogleAdsCampaignSummary {
+  name: string;
+  spend: number;            // USD
+  clicks: number;
+  impressions: number;
+  conversions: number;
+  conversion_value: number; // USD revenue tracked (0 if not set up)
+  roas: number;             // conversion_value / spend (0 if no value tracked)
+  ctr: number;              // 0–1
+  cpc: number;              // USD
 }
 
 export interface GoogleAdsMetrics {
   platform: "google_ads";
   fetched_at: string;
   customer_id: string;
-  total_spend_30d: number;      // USD
+  // Aggregate 30-day totals
+  total_spend_30d: number;            // USD
   total_clicks_30d: number;
   total_impressions_30d: number;
-  avg_ctr: number;              // 0–1
-  avg_cpc: number;              // USD
+  avg_ctr: number;                    // 0–1
+  avg_cpc: number;                    // USD
   total_conversions_30d: number;
-  cost_per_conversion: number;  // USD
+  cost_per_conversion: number;        // USD
+  total_conversion_value_30d: number; // USD revenue tracked via Google Ads
+  roas_30d: number;                   // total_conversion_value / total_spend
+  conversion_rate_30d: number;        // total_conversions / total_clicks (0–1)
+  // Campaign breakdown
+  top_campaigns: GoogleAdsCampaignSummary[]; // top 10 by spend
 }
 
 export type PlatformMetrics =
@@ -138,6 +191,7 @@ export type PlatformMetrics =
   | WooCommerceMetrics
   | GoogleAnalyticsMetrics
   | GoogleAdsMetrics;
+
 
 export interface StoredPlatformMetrics {
   mailchimp?: MailchimpMetrics;

@@ -177,6 +177,13 @@ export async function fetchMailchimpMetrics(
     click_rate: a.report_summary?.click_rate ?? 0,
   }));
 
+  // ── Step 7: Build 3-month growth history ─────────────────────────────────
+  const growthHistory3m = growthHistory.slice(0, 3).map((e: GrowthEntry) => ({
+    month: e.month,
+    subscribed: e.subscribed ?? 0,
+    unsubscribed: e.unsubscribed ?? 0,
+  }));
+
   return {
     platform: "mailchimp",
     fetched_at: new Date().toISOString(),
@@ -188,13 +195,19 @@ export async function fetchMailchimpMetrics(
     click_to_open_rate: clickToOpenRate,
     unsubscribe_rate: stats.unsubscribe_rate ?? 0,
     bounce_rate_hard: stats.hard_bounce_rate ?? 0,
+    soft_bounce_rate: stats.soft_bounce_rate ?? 0,
+    cleaned_count: stats.cleaned_count ?? 0,
+    total_contacts: stats.total_contacts ?? stats.member_count ?? listSize,
     campaign_count_30d: n30,
     email_revenue_30d: emailRevenue,
     new_subscribers_30d: newSubs,
     lost_subscribers_30d: lostSubs,
     list_growth_rate: listGrowthRate,
+    avg_sub_rate_monthly: stats.avg_sub_rate ?? 0,
+    list_rating: listData.list_rating ?? 0,
     automation_count: automations.length,
     automations,
     top_campaigns: allCampaigns,
+    growth_history_3m: growthHistory3m,
   };
 }

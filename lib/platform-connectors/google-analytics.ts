@@ -52,6 +52,13 @@ interface GA4ReportRow {
   metricValues?: Array<{ value: string }>;
 }
 
+function rowMetric(row: GA4ReportRow, idx: number, fallback = "0"): string {
+  return row.metricValues?.[idx]?.value ?? fallback;
+}
+function rowDim(row: GA4ReportRow, idx: number): string {
+  return row.dimensionValues?.[idx]?.value ?? "Unknown";
+}
+
 export async function fetchGoogleAnalyticsMetrics(
   creds: GoogleAnalyticsCredentials
 ): Promise<GoogleAnalyticsMetrics> {
@@ -68,52 +75,130 @@ export async function fetchGoogleAnalyticsMetrics(
     "Content-Type": "application/json",
   };
 
-  // Report 1: sessions + bounce rate + new users total (no dimension)
-  const summaryRes = await fetch(endpoint, {
-    method: "POST",
-    headers: authHeaders,
-    body: JSON.stringify({
-      metrics: [
-        { name: "sessions" },
-        { name: "bounceRate" },
-        { name: "newUsers" },
-      ],
-      dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+  // ── Run all reports in parallel ───────────────────────────────────────────
+  const [summaryRes, channelRes, deviceRes, landingRes, annual30Res] = await Promise.all([
+    // Report 1: 30-day aggregate — sessions, bounce rate, new users, engagement,
+    //           avg session duration, page views
+    fetch(endpoint, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        metrics: [
+          { name: "sessions" },
+          { name: "bounceRate" },
+          { name: "newUsers" },
+          { name: "engagementRate" },
+          { name: "averageSessionDuration" },
+          { name: "screenPageViews" },
+        ],
+        dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+      }),
     }),
-  });
+
+    // Report 2: sessions by channel (30d)
+    fetch(endpoint, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        dimensions: [{ name: "sessionDefaultChannelGroup" }],
+        metrics: [{ name: "sessions" }],
+        dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+        orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+        limit: 10,
+      }),
+    }),
+
+    // Report 3: sessions by device category (30d)
+    fetch(endpoint, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        dimensions: [{ name: "deviceCategory" }],
+        metrics: [{ name: "sessions" }],
+        dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+        orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+      }),
+    }),
+
+    // Report 4: top landing pages — sessions + bounce rate (30d)
+    fetch(endpoint, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        dimensions: [{ name: "landingPage" }],
+        metrics: [{ name: "sessions" }, { name: "bounceRate" }],
+        dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+        orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+        limit: 10,
+      }),
+    }),
+
+    // Report 5: 12-month totals — sessions + new users
+    fetch(endpoint, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        metrics: [{ name: "sessions" }, { name: "newUsers" }],
+        dateRanges: [{ startDate: "365daysAgo", endDate: "today" }],
+      }),
+    }),
+  ]);
+
+  // ── Parse summary ─────────────────────────────────────────────────────────
   if (!summaryRes.ok) {
     const err = await summaryRes.json().catch(() => ({}));
     throw new Error(
-      `GA4 API error ${summaryRes.status}: ${JSON.stringify((err as Record<string, unknown>).error ?? err)}`
+      `GA4 API error ${summaryRes.status}: ${JSON.stringify(
+        (err as Record<string, unknown>).error ?? err
+      )}`
     );
   }
   const summaryData = await summaryRes.json();
-  const summaryRow: GA4ReportRow = summaryData.rows?.[0] ?? {};
-  const sessions = parseInt(summaryRow.metricValues?.[0]?.value ?? "0", 10);
-  const bounceRate = parseFloat(summaryRow.metricValues?.[1]?.value ?? "0") / 100;
-  const newUsers = parseInt(summaryRow.metricValues?.[2]?.value ?? "0", 10);
+  const sRow: GA4ReportRow = summaryData.rows?.[0] ?? {};
+  const sessions = parseInt(rowMetric(sRow, 0), 10);
+  const bounceRate = parseFloat(rowMetric(sRow, 1)) / 100;
+  const newUsers = parseInt(rowMetric(sRow, 2), 10);
+  const engagementRate = parseFloat(rowMetric(sRow, 3)) / 100;
+  const avgSessionDurationSec = parseFloat(rowMetric(sRow, 4));
+  const pageViews = parseInt(rowMetric(sRow, 5), 10);
 
-  // Report 2: sessions by default channel group
-  const channelRes = await fetch(endpoint, {
-    method: "POST",
-    headers: authHeaders,
-    body: JSON.stringify({
-      dimensions: [{ name: "sessionDefaultChannelGroup" }],
-      metrics: [{ name: "sessions" }],
-      dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
-      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-      limit: 10,
-    }),
-  });
+  // ── Parse channels ────────────────────────────────────────────────────────
   const channelData = channelRes.ok ? await channelRes.json() : { rows: [] };
   const channels: Array<{ channel: string; sessions: number }> = (
     channelData.rows ?? []
   ).map((r: GA4ReportRow) => ({
-    channel: r.dimensionValues?.[0]?.value ?? "Unknown",
-    sessions: parseInt(r.metricValues?.[0]?.value ?? "0", 10),
+    channel: rowDim(r, 0),
+    sessions: parseInt(rowMetric(r, 0), 10),
+  }));
+  const topChannel = channels[0]?.channel ?? "Unknown";
+
+  // ── Parse device breakdown ────────────────────────────────────────────────
+  const deviceData = deviceRes.ok ? await deviceRes.json() : { rows: [] };
+  const deviceBreakdown: Array<{ device: string; sessions: number }> = (
+    deviceData.rows ?? []
+  ).map((r: GA4ReportRow) => ({
+    device: rowDim(r, 0),
+    sessions: parseInt(rowMetric(r, 0), 10),
   }));
 
-  const topChannel = channels[0]?.channel ?? "Unknown";
+  // ── Parse top landing pages ───────────────────────────────────────────────
+  const landingData = landingRes.ok ? await landingRes.json() : { rows: [] };
+  const topLandingPages: Array<{ page: string; sessions: number; bounce_rate: number }> = (
+    landingData.rows ?? []
+  ).map((r: GA4ReportRow) => ({
+    page: rowDim(r, 0),
+    sessions: parseInt(rowMetric(r, 0), 10),
+    bounce_rate: Math.round((parseFloat(rowMetric(r, 1)) / 100) * 1000) / 1000,
+  }));
+
+  // ── Parse 12-month totals ─────────────────────────────────────────────────
+  let sessions12m = 0, newUsers12m = 0;
+  if (annual30Res.ok) {
+    const annData = await annual30Res.json().catch(() => ({}));
+    const aRow: GA4ReportRow = annData.rows?.[0] ?? {};
+    sessions12m = parseInt(rowMetric(aRow, 0), 10);
+    newUsers12m = parseInt(rowMetric(aRow, 1), 10);
+  }
 
   return {
     platform: "google_analytics",
@@ -121,8 +206,15 @@ export async function fetchGoogleAnalyticsMetrics(
     property_id: pid,
     monthly_sessions: sessions,
     bounce_rate: Math.round(bounceRate * 1000) / 1000,
+    engagement_rate: Math.round(engagementRate * 1000) / 1000,
+    avg_session_duration_sec: Math.round(avgSessionDurationSec),
+    page_views_30d: pageViews,
     new_users_30d: newUsers,
+    sessions_12m: sessions12m,
+    new_users_12m: newUsers12m,
     top_channel: topChannel,
     channels,
+    device_breakdown: deviceBreakdown,
+    top_landing_pages: topLandingPages,
   };
 }
