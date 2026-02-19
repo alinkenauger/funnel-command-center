@@ -38,10 +38,10 @@ async function getAccessToken(saJson: ServiceAccountJson, scope: string): Promis
       assertion: jwt,
     }),
   });
-  const tokenData = await tokenRes.json();
+  const tokenData = await tokenRes.json().catch(() => ({}));
   if (!tokenRes.ok) {
     throw new Error(
-      `Google OAuth token error: ${tokenData.error_description ?? tokenData.error}`
+      `Google OAuth token error: ${tokenData.error_description ?? tokenData.error ?? tokenRes.statusText}`
     );
   }
   return tokenData.access_token as string;

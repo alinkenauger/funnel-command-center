@@ -407,23 +407,24 @@ export default function PlatformConnector() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ platform, credentials }),
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error ?? "Connection failed");
+    // Guard against empty body (e.g. Vercel timeout returning 504 with no JSON)
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((json as { error?: string }).error ?? `Server error ${res.status}`);
     setStatuses(json.statuses);
   };
 
   const handleSync = async (platform: PlatformKey) => {
     const res = await fetch(`/api/platforms/${platform}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error ?? "Sync failed");
-    setStatuses(json.statuses);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((json as { error?: string }).error ?? `Server error ${res.status}`);
+    setStatuses((json as { statuses: AllPlatformStatuses }).statuses);
   };
 
   const handleDisconnect = async (platform: PlatformKey) => {
     const res = await fetch(`/api/platforms/${platform}`, { method: "DELETE" });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error ?? "Disconnect failed");
-    setStatuses(json.statuses);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((json as { error?: string }).error ?? `Server error ${res.status}`);
+    setStatuses((json as { statuses: AllPlatformStatuses }).statuses);
   };
 
   const handleSyncAll = async () => {
