@@ -23,40 +23,65 @@ export async function listFolderFiles(folderId: string): Promise<DriveFile[]> {
     );
   }
 
-  const allFiles: DriveFile[] = [];
-  let pageToken: string | undefined;
+  const FOLDER_MIME = "application/vnd.google-apps.folder";
 
-  do {
-    const params = new URLSearchParams({
-      q: `'${folderId}' in parents and trashed = false`,
-      fields: "nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink)",
-      pageSize: "1000",
-      key: API_KEY,
-    });
-    if (pageToken) params.set("pageToken", pageToken);
+  // Recursively collects all non-folder files at any depth
+  async function recurse(parentId: string): Promise<DriveFile[]> {
+    const allItems: DriveFile[] = [];
+    let pageToken: string | undefined;
 
-    const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?${params}`,
-      { headers: { "User-Agent": "Mozilla/5.0" } }
-    );
+    do {
+      const params = new URLSearchParams({
+        q: `'${parentId}' in parents and trashed = false`,
+        fields: "nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink)",
+        pageSize: "1000",
+        key: API_KEY!,
+      });
+      if (pageToken) params.set("pageToken", pageToken);
 
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      const msg =
-        (errData as { error?: { message?: string } })?.error?.message ??
-        `Drive API returned HTTP ${res.status}`;
-      throw new Error(msg);
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files?${params}`,
+        { headers: { "User-Agent": "Mozilla/5.0" } }
+      );
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        const msg =
+          (errData as { error?: { message?: string } })?.error?.message ??
+          `Drive API returned HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+
+      const data = (await res.json()) as {
+        files?: DriveFile[];
+        nextPageToken?: string;
+      };
+      allItems.push(...(data.files ?? []));
+      pageToken = data.nextPageToken;
+    } while (pageToken);
+
+    // Separate files from subfolders
+    const files: DriveFile[] = [];
+    const subfolderPromises: Promise<DriveFile[]>[] = [];
+
+    for (const item of allItems) {
+      if (item.mimeType === FOLDER_MIME) {
+        // Recurse into subfolders in parallel
+        subfolderPromises.push(recurse(item.id));
+      } else {
+        files.push(item);
+      }
     }
 
-    const data = (await res.json()) as {
-      files?: DriveFile[];
-      nextPageToken?: string;
-    };
-    allFiles.push(...(data.files ?? []));
-    pageToken = data.nextPageToken;
-  } while (pageToken);
+    const subResults = await Promise.all(subfolderPromises);
+    for (const sub of subResults) {
+      files.push(...sub);
+    }
 
-  return allFiles;
+    return files;
+  }
+
+  return recurse(folderId);
 }
 
 // ── Content Extraction ────────────────────────────────────────────
