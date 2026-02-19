@@ -80,9 +80,11 @@ export function buildPlatformStatuses(
     "List size": fmt(m.list_size, "k"),
     "Open rate": fmt(m.open_rate, "pct"),
     "CTOR": fmt(m.click_to_open_rate, "pct"),
-    "Growth (30d)": `+${m.new_subscribers_30d} / -${m.lost_subscribers_30d}`,
-    "Automations": String(m.automation_count),
-    "List rating": `${m.list_rating}/5`,
+    "Growth (30d)": m.new_subscribers_30d != null && m.lost_subscribers_30d != null
+      ? `+${m.new_subscribers_30d} / -${m.lost_subscribers_30d}`
+      : "—",
+    "Automations": m.automation_count != null ? String(m.automation_count) : "—",
+    "List rating": m.list_rating != null ? `${m.list_rating}/5` : "—",
   });
 
   const wooPreview = (m: WooCommerceMetrics) => ({
@@ -98,8 +100,8 @@ export function buildPlatformStatuses(
     "Sessions (30d)": fmt(m.monthly_sessions, "k"),
     "Bounce rate": fmt(m.bounce_rate, "pct"),
     "Engagement rate": fmt(m.engagement_rate, "pct"),
-    "Avg session": `${m.avg_session_duration_sec}s`,
-    "Top channel": m.top_channel,
+    "Avg session": m.avg_session_duration_sec != null ? `${m.avg_session_duration_sec}s` : "—",
+    "Top channel": m.top_channel ?? "—",
   });
 
   const gadsPreview = (m: GoogleAdsMetrics) => ({
