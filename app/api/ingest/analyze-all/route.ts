@@ -7,7 +7,8 @@ import { extractFileContent } from "@/lib/google-drive";
 import type { DriveFile, FileFinding } from "@/lib/types";
 
 const client = new Anthropic();
-const CONCURRENCY = 4;
+const CONCURRENCY = 2;
+const CHUNK_DELAY_MS = 3_000; // stay under 50K input tokens/min Haiku rate limit
 
 const SYSTEM_PROMPT = `You are a business intelligence analyst extracting ALL useful data from a single business owner's file.
 
@@ -81,6 +82,8 @@ export async function POST(request: NextRequest) {
       try {
         // Process files in rolling chunks of CONCURRENCY
         for (let i = 0; i < files.length; i += CONCURRENCY) {
+          // Pause between chunks to avoid Haiku 50K input tokens/min rate limit
+          if (i > 0) await new Promise((r) => setTimeout(r, CHUNK_DELAY_MS));
           const chunk = files.slice(i, i + CONCURRENCY);
 
           await Promise.allSettled(
