@@ -81,6 +81,7 @@ Rules:
 - Set grade_confidence to "high" if ≥3 data points exist for the stage, "medium" for 1-2, "low" for 0.
 - Generate gap_questions only for stages with grade_confidence="low" or critical missing metrics.
 - Limit gap_questions to the 5 most impactful missing data points.
+- Be concise: limit strengths and weaknesses to 2 items each; keep each item under 12 words.
 - Return ONLY valid JSON with no markdown fences, no explanation, no commentary.`;
 
 const enc = new TextEncoder();
@@ -147,7 +148,7 @@ export async function POST(request: NextRequest) {
         // ── Call Claude (Haiku: 5-10× faster than Sonnet for JSON) ──
         const message = await client.messages.create({
           model: "claude-haiku-4-5-20251001",
-          max_tokens: 4096,
+          max_tokens: 8192,
           system: SYNTHESIS_SYSTEM_PROMPT,
           messages: [
             {
