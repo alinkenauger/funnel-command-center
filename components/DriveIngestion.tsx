@@ -177,15 +177,48 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
     setPhase("synthesizing");
 
     try {
+      // Strip redundant missing_data field to keep the payload compact
+      const compactFindings = accumulated.map(
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        ({ missing_data: _md, ...rest }) => rest
+      );
+
       const res = await fetch("/api/ingest/synthesize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allFindings: accumulated, folderId, allFiles: files }),
+        body: JSON.stringify({ allFindings: compactFindings, folderId, allFiles: files }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
 
-      setGapQuestions(json.gapQuestions ?? []);
+      if (!res.body) throw new Error("No streaming body from synthesize");
+
+      // Consume the SSE stream — keepalive comment lines are ignored, we only
+      // act on `data:` lines which carry { status }, { ok, gapQuestions, ... },
+      // or { error }.
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      let resolved = false;
+
+      while (!resolved) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() ?? "";
+        for (const part of parts) {
+          const dataLine = part.split("\n").find((l) => l.startsWith("data: "));
+          if (!dataLine) continue; // skip keepalive comment lines
+          const json = JSON.parse(dataLine.slice(6));
+          if (json.error) throw new Error(json.error);
+          if (json.ok) {
+            setGapQuestions(json.gapQuestions ?? []);
+            resolved = true;
+            break;
+          }
+        }
+      }
+
+      if (!resolved) throw new Error("Synthesis did not return a result");
 
       // Save drive-folder config
       await fetch("/api/drive-folder", {

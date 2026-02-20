@@ -1,7 +1,6 @@
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // Vercel: allow up to 300s for Claude synthesis
 
-import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { readJsonBlob, writeJsonBlob } from "@/lib/blob-storage";
@@ -84,6 +83,12 @@ Rules:
 - Limit gap_questions to the 5 most impactful missing data points.
 - Return ONLY valid JSON with no markdown fences, no explanation, no commentary.`;
 
+const enc = new TextEncoder();
+
+function sseEvent(data: unknown): Uint8Array {
+  return enc.encode(`data: ${JSON.stringify(data)}\n\n`);
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const { allFindings, folderId, allFiles } = body as {
@@ -93,88 +98,134 @@ export async function POST(request: NextRequest) {
   };
 
   if (!allFindings || !folderId) {
-    return NextResponse.json({ error: "allFindings and folderId are required" }, { status: 400 });
-  }
-
-  // Build compact summary of all findings for the synthesis prompt.
-  // Cap at ~120 KB to avoid hitting context limits and keep latency reasonable.
-  const MAX_FINDINGS_CHARS = 120_000;
-  let findingsSummary = JSON.stringify(allFindings, null, 0);
-  if (findingsSummary.length > MAX_FINDINGS_CHARS) {
-    // Trim the least-informative tail entries until we're under the cap
-    const trimmed = [...allFindings];
-    while (JSON.stringify(trimmed, null, 0).length > MAX_FINDINGS_CHARS && trimmed.length > 1) {
-      trimmed.pop();
-    }
-    findingsSummary = JSON.stringify(trimmed, null, 0);
-  }
-
-  // Load cached platform metrics and inject them if available
-  const platformMetrics = await readJsonBlob<StoredPlatformMetrics>("data/platform-metrics.json");
-  const platformSection = platformMetrics ? buildPlatformMetricsSummary(platformMetrics) : "";
-
-  let funnelData: FunnelData;
-  try {
-    const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 4096,
-      system: SYNTHESIS_SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-              content:
-            (platformSection ? `${platformSection}\n\n---\n\n` : "") +
-            `Here are the per-file findings from analyzing the business's Google Drive folder (${allFindings.length} files with relevant content):\n\n${findingsSummary}\n\nSynthesize these into the complete funnel analysis JSON object.`,
-        },
-      ],
-    });
-
-    const rawText = message.content[0].type === "text" ? message.content[0].text : "{}";
-    const cleaned = rawText.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const synthesized = JSON.parse(cleaned);
-
-    // Merge Drive-specific fields into the synthesized data
-    const gapQuestions: GapQuestion[] = synthesized.gap_questions ?? [];
-    const sources: DriveSource[] = synthesized.sources ?? [];
-
-    funnelData = {
-      ...synthesized,
-      drive_folder_id: folderId,
-      ingested_at: new Date().toISOString(),
-      sources,
-      gap_questions: gapQuestions,
-      processing_log: [
-        {
-          timestamp: new Date().toISOString(),
-          action: `Ingested ${allFiles.length} Drive files, extracted ${allFindings.length} findings`,
-        },
-      ],
-    } as FunnelData;
-  } catch (err) {
-    console.error("Synthesis error:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Synthesis failed" },
-      { status: 500 }
+    return new Response(
+      JSON.stringify({ error: "allFindings and folderId are required" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
 
-  // Save master-data.json and update drive-config.json concurrently
-  const existing = await readJsonBlob<DriveConfig>("data/drive-config.json");
-  const updatedConfig: DriveConfig = {
-    folderId,
-    folderName: existing?.folderName,
-    connectedAt: existing?.connectedAt ?? new Date().toISOString(),
-    lastSyncedAt: new Date().toISOString(),
-    knownFileIds: allFiles.map((f) => f.id),
-  };
-  await Promise.all([
-    writeJsonBlob("data/master-data.json", funnelData),
-    writeJsonBlob("data/drive-config.json", updatedConfig),
-  ]);
+  const stream = new ReadableStream({
+    async start(controller) {
+      // Send initial status so the client knows the connection is alive
+      controller.enqueue(sseEvent({ status: "synthesizing" }));
 
-  return NextResponse.json({
-    ok: true,
-    gapQuestions: funnelData.gap_questions ?? [],
-    sourceCount: funnelData.sources?.length ?? 0,
+      // Keepalive: SSE comment lines every 15s prevent Vercel / nginx from
+      // closing an idle-looking connection while Claude is generating.
+      const keepalive = setInterval(() => {
+        try {
+          controller.enqueue(enc.encode(": keepalive\n\n"));
+        } catch {
+          // controller already closed — stop the interval
+          clearInterval(keepalive);
+        }
+      }, 15_000);
+
+      try {
+        // ── Build compact findings payload ──────────────────────────
+        // Cap at ~120 KB to avoid context limits
+        const MAX_FINDINGS_CHARS = 120_000;
+        let findingsSummary = JSON.stringify(allFindings, null, 0);
+        if (findingsSummary.length > MAX_FINDINGS_CHARS) {
+          const trimmed = [...allFindings];
+          while (
+            JSON.stringify(trimmed, null, 0).length > MAX_FINDINGS_CHARS &&
+            trimmed.length > 1
+          ) {
+            trimmed.pop();
+          }
+          findingsSummary = JSON.stringify(trimmed, null, 0);
+        }
+
+        // ── Inject platform metrics if cached ───────────────────────
+        const platformMetrics = await readJsonBlob<StoredPlatformMetrics>(
+          "data/platform-metrics.json"
+        );
+        const platformSection = platformMetrics
+          ? buildPlatformMetricsSummary(platformMetrics)
+          : "";
+
+        // ── Call Claude (Haiku: 5-10× faster than Sonnet for JSON) ──
+        const message = await client.messages.create({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 4096,
+          system: SYNTHESIS_SYSTEM_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content:
+                (platformSection ? `${platformSection}\n\n---\n\n` : "") +
+                `Here are the per-file findings from analyzing the business's Google Drive folder (${allFindings.length} files with relevant content):\n\n${findingsSummary}\n\nSynthesize these into the complete funnel analysis JSON object.`,
+            },
+          ],
+        });
+
+        const rawText =
+          message.content[0].type === "text" ? message.content[0].text : "{}";
+        const cleaned = rawText
+          .replace(/^```(?:json)?\n?/m, "")
+          .replace(/\n?```$/m, "")
+          .trim();
+        const synthesized = JSON.parse(cleaned);
+
+        const gapQuestions: GapQuestion[] = synthesized.gap_questions ?? [];
+        const sources: DriveSource[] = synthesized.sources ?? [];
+
+        const funnelData: FunnelData = {
+          ...synthesized,
+          drive_folder_id: folderId,
+          ingested_at: new Date().toISOString(),
+          sources,
+          gap_questions: gapQuestions,
+          processing_log: [
+            {
+              timestamp: new Date().toISOString(),
+              action: `Ingested ${allFiles.length} Drive files, extracted ${allFindings.length} findings`,
+            },
+          ],
+        } as FunnelData;
+
+        // ── Persist results concurrently ────────────────────────────
+        const existing = await readJsonBlob<DriveConfig>("data/drive-config.json");
+        const updatedConfig: DriveConfig = {
+          folderId,
+          folderName: existing?.folderName,
+          connectedAt: existing?.connectedAt ?? new Date().toISOString(),
+          lastSyncedAt: new Date().toISOString(),
+          knownFileIds: allFiles.map((f) => f.id),
+        };
+        await Promise.all([
+          writeJsonBlob("data/master-data.json", funnelData),
+          writeJsonBlob("data/drive-config.json", updatedConfig),
+        ]);
+
+        clearInterval(keepalive);
+        controller.enqueue(
+          sseEvent({
+            ok: true,
+            gapQuestions: funnelData.gap_questions ?? [],
+            sourceCount: funnelData.sources?.length ?? 0,
+          })
+        );
+      } catch (err) {
+        clearInterval(keepalive);
+        console.error("Synthesis error:", err);
+        controller.enqueue(
+          sseEvent({
+            error: err instanceof Error ? err.message : "Synthesis failed",
+          })
+        );
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
   });
 }
