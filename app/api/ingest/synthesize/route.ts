@@ -52,14 +52,6 @@ Your job is to merge all findings into a single cohesive analysis. Return ONLY a
     "overall_grade_confidence": "<high|medium|low>",
     "total_revenue_opportunity": <sum of all stage revenue_opportunity>
   },
-  "sources": [
-    {
-      "file_id": "<id>",
-      "file_name": "<name>",
-      "file_link": "<link>",
-      "stages_referenced": ["traffic", ...]
-    }
-  ],
   "gap_questions": [
     {
       "stage": "<stage name>",
@@ -145,10 +137,10 @@ export async function POST(request: NextRequest) {
           ? buildPlatformMetricsSummary(platformMetrics)
           : "";
 
-        // ── Call Claude (Haiku: 5-10× faster than Sonnet for JSON) ──
+        // ── Call Claude (Sonnet: reliable JSON generation + 16K output headroom) ──
         const message = await client.messages.create({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 8192,
+          model: "claude-sonnet-4-6",
+          max_tokens: 16384,
           system: SYNTHESIS_SYSTEM_PROMPT,
           messages: [
             {
@@ -166,10 +158,22 @@ export async function POST(request: NextRequest) {
           .replace(/^```(?:json)?\n?/m, "")
           .replace(/\n?```$/m, "")
           .trim();
-        const synthesized = JSON.parse(cleaned);
+        let synthesized: Record<string, unknown>;
+        try {
+          synthesized = JSON.parse(cleaned);
+        } catch {
+          const preview = cleaned.slice(0, 200);
+          throw new Error(`Synthesis JSON parse failed (${cleaned.length} chars). Preview: ${preview}`);
+        }
 
         const gapQuestions: GapQuestion[] = synthesized.gap_questions ?? [];
-        const sources: DriveSource[] = synthesized.sources ?? [];
+        // Build sources from allFindings — keeps Claude's output smaller
+        const sources: DriveSource[] = allFindings.map((f) => ({
+          file_id: f.file_id,
+          file_name: f.file_name,
+          file_link: f.file_link,
+          stages_referenced: f.stages ?? [],
+        }));
 
         const funnelData: FunnelData = {
           ...synthesized,
