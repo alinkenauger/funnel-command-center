@@ -166,7 +166,7 @@ export async function POST(request: NextRequest) {
           throw new Error(`Synthesis JSON parse failed (${cleaned.length} chars). Preview: ${preview}`);
         }
 
-        const gapQuestions: GapQuestion[] = synthesized.gap_questions ?? [];
+        const gapQuestions: GapQuestion[] = (synthesized.gap_questions as GapQuestion[]) ?? [];
         // Build sources from allFindings — keeps Claude's output smaller
         const sources: DriveSource[] = allFindings.map((f) => ({
           file_id: f.file_id,
