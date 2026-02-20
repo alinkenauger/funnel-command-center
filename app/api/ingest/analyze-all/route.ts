@@ -7,8 +7,8 @@ import { extractFileContent } from "@/lib/google-drive";
 import type { DriveFile, FileFinding } from "@/lib/types";
 
 const client = new Anthropic();
-const CONCURRENCY = 2;
-const CHUNK_DELAY_MS = 3_000; // stay under 50K input tokens/min Haiku rate limit
+const CONCURRENCY = 1; // sequential — accuracy over speed
+const CHUNK_DELAY_MS = 1_000; // small buffer between files
 
 const SYSTEM_PROMPT = `You are a business intelligence analyst extracting ALL useful data from a single business owner's file.
 
@@ -147,8 +147,8 @@ export async function POST(request: NextRequest) {
                 }
 
                 const message = await client.messages.create({
-                  model: "claude-haiku-4-5-20251001",
-                  max_tokens: 2048,
+                  model: "claude-sonnet-4-6",
+                  max_tokens: 4096,
                   system: SYSTEM_PROMPT,
                   messages: [
                     {
