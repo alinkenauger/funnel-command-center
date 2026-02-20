@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   FolderOpen,
   RefreshCw,
@@ -15,30 +15,27 @@ import {
   X,
   HelpCircle,
   ArrowRight,
+  SkipForward,
 } from "lucide-react";
 import type { DriveFile, FileFinding, GapQuestion } from "@/lib/types";
 
-const BATCH_SIZE = 4;
+const CONCURRENCY = 6;
 
 type Phase =
   | "idle"
   | "listing"
   | "confirming"
   | "processing"
-  | "retrying"
   | "synthesizing"
   | "done"
   | "error";
 
-interface BatchStatus {
-  index: number;
-  label: string;
-  status: "pending" | "running" | "done" | "error";
-  findingsCount: number;
-  skippedCount: number;
-  deferredCount: number;
+interface FileStatus {
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  status: "pending" | "analyzing" | "done" | "error" | "skipped";
   errorMsg?: string;
-  isRetry?: boolean;
 }
 
 interface DriveIngestionProps {
@@ -81,12 +78,22 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
   const [files, setFiles] = useState<DriveFile[]>([]);
   const [newFileCount, setNewFileCount] = useState(0);
   const [folderId, setFolderId] = useState("");
-  const [batches, setBatches] = useState<BatchStatus[]>([]);
+  const [fileStatuses, setFileStatuses] = useState<FileStatus[]>([]);
   const [allFindings, setAllFindings] = useState<FileFinding[]>([]);
   const [gapQuestions, setGapQuestions] = useState<GapQuestion[]>([]);
-  const [totalSkipped, setTotalSkipped] = useState(0);
-  const [totalDeferred, setTotalDeferred] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
+
+  // Stable ref so the processing loop can accumulate without stale closures
+  const accumulatedRef = useRef<FileFinding[]>([]);
+
+  const updateFileStatus = useCallback(
+    (fileId: string, status: FileStatus["status"], errorMsg?: string) => {
+      setFileStatuses((prev) =>
+        prev.map((f) => (f.fileId === fileId ? { ...f, status, errorMsg } : f))
+      );
+    },
+    []
+  );
 
   // ── Step 1: List files ──────────────────────────────────────────
   const handleList = useCallback(async () => {
@@ -113,137 +120,58 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
     }
   }, [folderUrl]);
 
-  // ── Step 2: Run batches ─────────────────────────────────────────
+  // ── Step 2: Process files in parallel chunks ────────────────────
   const handleStartIngestion = useCallback(async () => {
     setPhase("processing");
+    accumulatedRef.current = [];
 
-    const chunks: DriveFile[][] = [];
-    for (let i = 0; i < files.length; i += BATCH_SIZE) {
-      chunks.push(files.slice(i, i + BATCH_SIZE));
-    }
-
-    const initialBatches: BatchStatus[] = chunks.map((chunk, i) => ({
-      index: i,
-      label: `Batch ${i + 1} of ${chunks.length} (${chunk.length} files)`,
-      status: "pending",
-      findingsCount: 0,
-      skippedCount: 0,
-      deferredCount: 0,
-    }));
-    setBatches(initialBatches);
-
-    const accumulated: FileFinding[] = [];
-    let skipped = 0;
-    const allOversized: DriveFile[] = [];
-
-    for (let i = 0; i < chunks.length; i++) {
-      // Mark running
-      setBatches((prev) =>
-        prev.map((b) => (b.index === i ? { ...b, status: "running" } : b))
-      );
-
-      try {
-        const res = await fetch("/api/ingest/batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ files: chunks[i], batchIndex: i }),
-        });
-        const json = await res.json();
-
-        const batchFindings: FileFinding[] = json.findings ?? [];
-        const batchSkipped: number = (json.skipped ?? []).length;
-        const batchOversized: DriveFile[] = json.oversized ?? [];
-        const batchError: string | undefined = json.error;
-
-        accumulated.push(...batchFindings);
-        skipped += batchSkipped;
-        allOversized.push(...batchOversized);
-
-        setBatches((prev) =>
-          prev.map((b) =>
-            b.index === i
-              ? {
-                  ...b,
-                  status: batchError ? "error" : "done",
-                  findingsCount: batchFindings.length,
-                  skippedCount: batchSkipped,
-                  deferredCount: batchOversized.length,
-                  errorMsg: batchError,
-                }
-              : b
-          )
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Request failed";
-        setBatches((prev) =>
-          prev.map((b) => (b.index === i ? { ...b, status: "error", errorMsg: msg } : b))
-        );
-        // Continue with remaining batches
-      }
-    }
-
-    // ── Retry oversized files one-by-one ────────────────────────
-    if (allOversized.length > 0) {
-      setPhase("retrying");
-      setTotalDeferred(allOversized.length);
-
-      const retryBatchOffset = chunks.length;
-      const retryInitial: BatchStatus[] = allOversized.map((file, ri) => ({
-        index: retryBatchOffset + ri,
-        label: `↩ Retry: ${file.name}`,
+    // Initialize all files as pending
+    setFileStatuses(
+      files.map((f) => ({
+        fileId: f.id,
+        fileName: f.name,
+        mimeType: f.mimeType,
         status: "pending",
-        findingsCount: 0,
-        skippedCount: 0,
-        deferredCount: 0,
-        isRetry: true,
-      }));
-      setBatches((prev) => [...prev, ...retryInitial]);
+      }))
+    );
 
-      for (let ri = 0; ri < allOversized.length; ri++) {
-        const batchIdx = retryBatchOffset + ri;
-        setBatches((prev) =>
-          prev.map((b) => (b.index === batchIdx ? { ...b, status: "running" } : b))
-        );
+    // Process in rolling chunks of CONCURRENCY
+    for (let i = 0; i < files.length; i += CONCURRENCY) {
+      const chunk = files.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(
+        chunk.map(async (file) => {
+          updateFileStatus(file.id, "analyzing");
+          try {
+            const res = await fetch("/api/ingest/analyze-file", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ file }),
+            });
+            const json = await res.json();
 
-        try {
-          const res = await fetch("/api/ingest/batch", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ files: [allOversized[ri]], batchIndex: batchIdx }),
-          });
-          const json = await res.json();
-
-          const batchFindings: FileFinding[] = json.findings ?? [];
-          const batchSkipped: number = (json.skipped ?? []).length;
-          const batchError: string | undefined = json.error;
-
-          accumulated.push(...batchFindings);
-          skipped += batchSkipped;
-
-          setBatches((prev) =>
-            prev.map((b) =>
-              b.index === batchIdx
-                ? {
-                    ...b,
-                    status: batchError ? "error" : "done",
-                    findingsCount: batchFindings.length,
-                    skippedCount: batchSkipped,
-                    errorMsg: batchError,
-                  }
-                : b
-            )
-          );
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : "Request failed";
-          setBatches((prev) =>
-            prev.map((b) => (b.index === batchIdx ? { ...b, status: "error", errorMsg: msg } : b))
-          );
-        }
-      }
+            if (json.skipped) {
+              updateFileStatus(file.id, "skipped");
+              return;
+            }
+            if (!res.ok || json.error) {
+              updateFileStatus(file.id, "error", json.error ?? `HTTP ${res.status}`);
+              return;
+            }
+            accumulatedRef.current = [...accumulatedRef.current, json.finding];
+            updateFileStatus(file.id, "done");
+          } catch (err) {
+            updateFileStatus(
+              file.id,
+              "error",
+              err instanceof Error ? err.message : "Request failed"
+            );
+          }
+        })
+      );
     }
 
+    const accumulated = accumulatedRef.current;
     setAllFindings(accumulated);
-    setTotalSkipped(skipped);
 
     // ── Step 3: Synthesize ────────────────────────────────────────
     setPhase("synthesizing");
@@ -271,7 +199,15 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
       setErrorMsg(err instanceof Error ? err.message : "Synthesis failed");
       setPhase("error");
     }
-  }, [files, folderId]);
+  }, [files, folderId, updateFileStatus]);
+
+  // ── Derived counts ──────────────────────────────────────────────
+  const doneCount = fileStatuses.filter(
+    (f) => f.status === "done" || f.status === "skipped" || f.status === "error"
+  ).length;
+  const totalCount = fileStatuses.length;
+  const progressPct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+  const skippedCount = fileStatuses.filter((f) => f.status === "skipped").length;
 
   // ── Shared wrapper classes ──────────────────────────────────────
   const wrapperClass = compact
@@ -378,72 +314,90 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
                   className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
                 >
                   <ArrowRight className="w-4 h-4" />
-                  Start AI Analysis ({Math.ceil(files.length / BATCH_SIZE)} batches)
+                  Start AI Analysis ({files.length} files)
                 </button>
               </div>
               <p className="text-xs text-zinc-600 text-center">
-                Claude will process {BATCH_SIZE} files per batch. Unsupported or restricted files
-                are skipped automatically.
+                Claude reads each file natively — PDFs, images, and documents analyzed in parallel.
+                Unsupported or restricted files are skipped automatically.
               </p>
             </div>
           )}
 
-          {/* ── PROCESSING / RETRYING: Batch progress ────────────── */}
-          {(phase === "processing" || phase === "retrying" || phase === "synthesizing") && (
+          {/* ── PROCESSING / SYNTHESIZING: Per-file progress ─────── */}
+          {(phase === "processing" || phase === "synthesizing") && (
             <div className="space-y-4">
-              <p className="text-sm text-zinc-400">
-                {phase === "synthesizing"
-                  ? "Synthesizing all findings into funnel report…"
-                  : phase === "retrying"
-                  ? `Retrying ${totalDeferred} large file${totalDeferred !== 1 ? "s" : ""} individually…`
-                  : `Processing batches — ${batches.filter((b) => b.status === "done").length} of ${batches.length} complete`}
-              </p>
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-zinc-400">
+                  {phase === "synthesizing"
+                    ? "Synthesizing all findings into funnel report…"
+                    : `Analyzing files — ${doneCount} of ${totalCount} complete`}
+                </p>
+                <span className="text-xs text-zinc-500 tabular-nums">{progressPct}%</span>
+              </div>
 
-              <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
-                {batches.map((batch) => (
+              {/* Progress bar */}
+              <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-indigo-500 rounded-full transition-all duration-300"
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+
+              {/* Per-file list */}
+              <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
+                {fileStatuses.map((fs) => (
                   <div
-                    key={batch.index}
-                    className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border ${
-                      batch.isRetry
-                        ? "bg-amber-950/20 border-amber-800/40"
-                        : "bg-zinc-950 border-zinc-800"
-                    }`}
+                    key={fs.fileId}
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 bg-zinc-950 border border-zinc-800/70"
                   >
+                    {/* File type icon */}
+                    <div className="shrink-0">{mimeIcon(fs.mimeType)}</div>
+
+                    {/* File name */}
+                    <span className="text-xs text-zinc-300 flex-1 truncate" title={fs.fileName}>
+                      {fs.fileName}
+                    </span>
+
+                    {/* Status badge */}
                     <div className="shrink-0">
-                      {batch.status === "done" && (
-                        <CheckCircle className={`w-4 h-4 ${batch.isRetry ? "text-amber-400" : "text-emerald-400"}`} />
+                      {fs.status === "pending" && (
+                        <span className="text-xs text-zinc-600">waiting</span>
                       )}
-                      {batch.status === "running" && (
-                        <Loader2 className={`w-4 h-4 animate-spin ${batch.isRetry ? "text-amber-400" : "text-indigo-400"}`} />
+                      {fs.status === "analyzing" && (
+                        <span className="flex items-center gap-1 text-xs text-amber-400">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          analyzing
+                        </span>
                       )}
-                      {batch.status === "pending" && (
-                        <div className="w-4 h-4 rounded-full border border-zinc-700" />
+                      {fs.status === "done" && (
+                        <span className="flex items-center gap-1 text-xs text-emerald-400">
+                          <CheckCircle className="w-3 h-3" />
+                          done
+                        </span>
                       )}
-                      {batch.status === "error" && (
-                        <AlertCircle className="w-4 h-4 text-red-400" />
+                      {fs.status === "skipped" && (
+                        <span className="flex items-center gap-1 text-xs text-zinc-500">
+                          <SkipForward className="w-3 h-3" />
+                          skipped
+                        </span>
+                      )}
+                      {fs.status === "error" && (
+                        <span
+                          className="flex items-center gap-1 text-xs text-red-400"
+                          title={fs.errorMsg}
+                        >
+                          <AlertCircle className="w-3 h-3" />
+                          error
+                        </span>
                       )}
                     </div>
-                    <span className={`text-xs flex-1 ${batch.isRetry ? "text-amber-300/80" : "text-zinc-400"}`}>
-                      {batch.label}
-                    </span>
-                    {batch.status === "done" && (
-                      <span className="text-xs text-zinc-500">
-                        {batch.findingsCount} findings
-                        {batch.skippedCount > 0 && `, ${batch.skippedCount} skipped`}
-                        {batch.deferredCount > 0 && `, ${batch.deferredCount} deferred`}
-                      </span>
-                    )}
-                    {batch.status === "error" && batch.errorMsg && (
-                      <span className="text-xs text-red-400 truncate max-w-[180px]" title={batch.errorMsg}>
-                        {batch.errorMsg}
-                      </span>
-                    )}
                   </div>
                 ))}
 
                 {phase === "synthesizing" && (
-                  <div className="flex items-center gap-3 bg-zinc-950 border border-indigo-800/50 rounded-lg px-3 py-2.5">
-                    <Loader2 className="w-4 h-4 text-indigo-400 animate-spin shrink-0" />
+                  <div className="flex items-center gap-2.5 bg-zinc-950 border border-indigo-800/50 rounded-lg px-3 py-2.5">
+                    <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin shrink-0" />
                     <span className="text-xs text-indigo-300">
                       Building master funnel report from {allFindings.length} file findings…
                     </span>
@@ -451,11 +405,10 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
                 )}
               </div>
 
-              {/* Totals bar */}
-              {batches.some((b) => b.status === "done") && (phase === "processing" || phase === "retrying") && (
+              {/* Running totals */}
+              {doneCount > 0 && phase === "processing" && (
                 <div className="text-xs text-zinc-500 text-center">
-                  {allFindings.length} findings extracted · {totalSkipped} files skipped
-                  {totalDeferred > 0 && ` · ${totalDeferred} large files retrying solo`}
+                  {allFindings.length} findings extracted · {skippedCount} files skipped
                 </div>
               )}
             </div>
@@ -479,7 +432,7 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
                   <p className="text-xs text-zinc-500 mt-0.5">Findings extracted</p>
                 </div>
                 <div className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-3 text-center">
-                  <p className="text-lg font-semibold text-zinc-100 tabular-nums">{totalSkipped}</p>
+                  <p className="text-lg font-semibold text-zinc-100 tabular-nums">{skippedCount}</p>
                   <p className="text-xs text-zinc-500 mt-0.5">Files skipped</p>
                 </div>
               </div>
