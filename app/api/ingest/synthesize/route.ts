@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
   try {
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 8192,
+      max_tokens: 4096,
       system: SYNTHESIS_SYSTEM_PROMPT,
       messages: [
         {
@@ -158,10 +158,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Save master-data.json to Vercel Blob
-  await writeJsonBlob("data/master-data.json", funnelData);
-
-  // Update drive-config.json with knownFileIds and lastSyncedAt
+  // Save master-data.json and update drive-config.json concurrently
   const existing = await readJsonBlob<DriveConfig>("data/drive-config.json");
   const updatedConfig: DriveConfig = {
     folderId,
@@ -170,7 +167,10 @@ export async function POST(request: NextRequest) {
     lastSyncedAt: new Date().toISOString(),
     knownFileIds: allFiles.map((f) => f.id),
   };
-  await writeJsonBlob("data/drive-config.json", updatedConfig);
+  await Promise.all([
+    writeJsonBlob("data/master-data.json", funnelData),
+    writeJsonBlob("data/drive-config.json", updatedConfig),
+  ]);
 
   return NextResponse.json({
     ok: true,
