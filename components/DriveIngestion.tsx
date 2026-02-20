@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import type { DriveFile, FileFinding, GapQuestion } from "@/lib/types";
 
-const CONCURRENCY = 6;
+// CONCURRENCY is handled server-side in analyze-all route
 
 type Phase =
   | "idle"
@@ -135,48 +135,63 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
       }))
     );
 
-    // Process in rolling chunks of CONCURRENCY
-    for (let i = 0; i < files.length; i += CONCURRENCY) {
-      const chunk = files.slice(i, i + CONCURRENCY);
-      await Promise.allSettled(
-        chunk.map(async (file) => {
-          updateFileStatus(file.id, "analyzing");
-          try {
-            const res = await fetch("/api/ingest/analyze-file", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ file }),
-            });
-            const json = await res.json();
-
-            if (json.skipped) {
-              updateFileStatus(file.id, "skipped");
-              return;
-            }
-            if (!res.ok || json.error) {
-              updateFileStatus(file.id, "error", json.error ?? `HTTP ${res.status}`);
-              return;
-            }
-            accumulatedRef.current = [...accumulatedRef.current, json.finding];
-            updateFileStatus(file.id, "done");
-          } catch (err) {
-            updateFileStatus(
-              file.id,
-              "error",
-              err instanceof Error ? err.message : "Request failed"
-            );
-          }
-        })
-      );
-    }
-
-    const accumulated = accumulatedRef.current;
-    setAllFindings(accumulated);
-
-    // ── Step 3: Synthesize ────────────────────────────────────────
-    setPhase("synthesizing");
-
     try {
+      // ── Step 2a: Stream per-file analysis from server ───────────
+      // Single SSE stream — server handles concurrency, we just read events
+      const analyzeRes = await fetch("/api/ingest/analyze-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ files }),
+      });
+
+      if (!analyzeRes.body) throw new Error("No streaming response from analyze-all");
+
+      const analyzeReader = analyzeRes.body.getReader();
+      const analyzeDec = new TextDecoder();
+      let analyzeBuf = "";
+      let analyzeResolved = false;
+
+      while (!analyzeResolved) {
+        const { done, value } = await analyzeReader.read();
+        if (done) break;
+        analyzeBuf += analyzeDec.decode(value, { stream: true });
+        const parts = analyzeBuf.split("\n\n");
+        analyzeBuf = parts.pop() ?? "";
+        for (const part of parts) {
+          const dataLine = part.split("\n").find((l) => l.startsWith("data: "));
+          if (!dataLine) continue; // skip keepalive comment lines
+          const event = JSON.parse(dataLine.slice(6));
+
+          if (event.error) throw new Error(event.error);
+
+          if (event.fileId) {
+            // Per-file status update
+            if (event.status === "analyzing") {
+              updateFileStatus(event.fileId, "analyzing");
+            } else if (event.status === "done") {
+              updateFileStatus(event.fileId, "done");
+            } else if (event.status === "skipped") {
+              updateFileStatus(event.fileId, "skipped");
+            } else if (event.status === "error") {
+              updateFileStatus(event.fileId, "error", event.error ?? "Analysis failed");
+            }
+          }
+
+          if (event.done) {
+            // Final event — all findings arrive here
+            accumulatedRef.current = event.findings ?? [];
+            analyzeResolved = true;
+            break;
+          }
+        }
+      }
+
+      const accumulated = accumulatedRef.current;
+      setAllFindings(accumulated);
+
+      // ── Step 3: Synthesize ──────────────────────────────────────
+      setPhase("synthesizing");
+
       // Strip redundant missing_data field to keep the payload compact
       const compactFindings = accumulated.map(
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -229,7 +244,7 @@ export default function DriveIngestion({ onComplete, onClose, compact }: DriveIn
 
       setPhase("done");
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Synthesis failed");
+      setErrorMsg(err instanceof Error ? err.message : "Ingestion failed");
       setPhase("error");
     }
   }, [files, folderId, updateFileStatus]);
