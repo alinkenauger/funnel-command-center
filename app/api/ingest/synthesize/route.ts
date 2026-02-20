@@ -174,7 +174,6 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    funnelData,
     gapQuestions: funnelData.gap_questions ?? [],
     sourceCount: funnelData.sources?.length ?? 0,
   });
